@@ -69,6 +69,24 @@ class MiracastReceiverTest {
     }
 
     @Test
+    fun `start requests permission state when neither Wi-Fi Direct grant is present`() {
+        val context = mockk<Context>()
+        val manager = mockk<WifiP2pManager>(relaxed = true)
+        val channel = mockk<WifiP2pManager.Channel>(relaxed = true)
+        val states = mutableListOf<ProtocolState>()
+
+        every { context.getSystemService(Context.WIFI_P2P_SERVICE) } returns manager
+        every { context.mainLooper } returns Looper.getMainLooper()
+        every { context.checkSelfPermission(any()) } returns PackageManager.PERMISSION_DENIED
+        every { manager.initialize(eq(context), any(), any()) } returns channel
+
+        MiracastReceiver(context) { states.add(it) }.start()
+
+        verify(exactly = 0) { manager.addLocalService(any(), any(), any()) }
+        assertEquals(ProtocolState.PERMISSION_REQUIRED, states.last())
+    }
+
+    @Test
     fun `WFD RTSP port uses Miracast default`() {
         assertEquals(7236, MiracastReceiver.WFD_RTSP_PORT)
     }

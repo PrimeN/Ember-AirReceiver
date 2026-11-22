@@ -57,9 +57,8 @@ class AirReceiverActivity : AppCompatActivity() {
 
     private val miracastPermissionRequest =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-            if (grants[miracastPermission] == true) {
-                ServiceController.restart(this)
-            } else {
+            ServiceController.restart(this)
+            if (grants[miracastPermission] != true) {
                 showMiracastPermissionHelp()
             }
         }
