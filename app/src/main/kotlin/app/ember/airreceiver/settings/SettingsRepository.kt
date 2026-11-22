@@ -72,16 +72,18 @@ class SettingsRepository(private val context: Context) {
      *
      * @param transform A function that takes the current settings and returns the updated settings.
      */
-    suspend fun update(transform: (AppSettings) -> AppSettings) {
-        try {
+    suspend fun update(transform: (AppSettings) -> AppSettings): Boolean {
+        return try {
             context.dataStore.edit { prefs ->
                 val current = prefs.toAppSettings()
                 val updated = transform(current)
                 prefs.fromAppSettings(updated)
             }
+            true
         } catch (e: Exception) {
             e.rethrowIfCancellation()
             Logger.e("Failed to save settings to DataStore", e)
+            false
         }
     }
 

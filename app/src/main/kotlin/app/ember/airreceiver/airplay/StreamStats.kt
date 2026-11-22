@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicLong
  * volatile ints keep the hot path allocation-free — no flows or locks on the per-frame path.
  *
  * [overlayEnabled] is set from [app.ember.airreceiver.settings.AppSettings.showDebugOverlay] when the AirPlay
- * receiver starts, so the HUD appears for the next mirroring session after the toggle is flipped.
+ * receiver starts and whenever the user saves the overlay setting.
  */
 object StreamStats {
     /** Master switch, mirrored from the user setting; the overlay only draws when true. */

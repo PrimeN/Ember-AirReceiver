@@ -22,6 +22,7 @@ import androidx.lifecycle.lifecycleScope
 import app.ember.airreceiver.AirReceiverActivity
 import app.ember.airreceiver.BuildConfig
 import app.ember.airreceiver.R
+import app.ember.airreceiver.airplay.StreamStats
 import app.ember.airreceiver.service.ServiceController
 import app.ember.airreceiver.settings.AppSettings
 import app.ember.airreceiver.settings.SettingsRepository
@@ -212,8 +213,24 @@ class SettingsFragment : Fragment() {
         setToggleListener(rowMirrorAudio)  { enabled -> saveAndRestart { it.copy(mirrorAudioEnabled = enabled) } }
         setToggleListener(rowPinAuth)      { enabled -> saveAndRestart { it.copy(airPlayPinAuthEnabled = enabled) } }
         setToggleListener(rowStartOnBoot)  { enabled -> save { it.copy(startOnBoot = enabled) } }
-        setToggleListener(rowDebugOverlay) { enabled -> save { it.copy(showDebugOverlay = enabled) } }
-        setToggleListener(rowForceHighRes) { enabled -> save { it.copy(forceHighResolution = enabled) } }
+        setToggleListener(rowDebugOverlay) { enabled ->
+            viewLifecycleOwner.lifecycleScope.launch {
+                if (settingsRepository.update { it.copy(showDebugOverlay = enabled) }) {
+                    StreamStats.overlayEnabled = enabled
+                } else {
+                    setToggle(rowDebugOverlay, settingsRepository.settingsFlow.first().showDebugOverlay)
+                }
+            }
+        }
+        setToggleListener(rowForceHighRes) { enabled ->
+            viewLifecycleOwner.lifecycleScope.launch {
+                if (settingsRepository.update { it.copy(forceHighResolution = enabled) }) {
+                    (activity as? AirReceiverActivity)?.restartRunningReceivers()
+                } else {
+                    setToggle(rowForceHighRes, settingsRepository.settingsFlow.first().forceHighResolution)
+                }
+            }
+        }
 
         rowDiagnostics.setOnClickListener { openDiagnostics() }
         rowPrivacy.setOnClickListener { openPrivacyPolicy() }
@@ -382,8 +399,9 @@ class SettingsFragment : Fragment() {
 
             val defaults = AppSettings.DEFAULT
             populateUI(defaults)
-            // Start on boot is only read by BootReceiver.
-            if (previousSettings.copy(startOnBoot = defaults.startOnBoot) != defaults) {
+            StreamStats.overlayEnabled = defaults.showDebugOverlay
+            if (previousSettings.copy(startOnBoot = defaults.startOnBoot,
+                    showDebugOverlay = defaults.showDebugOverlay) != defaults) {
                 (activity as? AirReceiverActivity)?.restartRunningReceivers()
             }
         }
