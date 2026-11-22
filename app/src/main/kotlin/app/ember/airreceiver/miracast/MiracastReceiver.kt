@@ -226,7 +226,11 @@ class MiracastReceiver(
                     rtspServer.setGroupInterface(if (info.isGroupOwner) info.groupOwnerAddress else null)
                     val source = if (info.isGroupOwner) group.clientList.firstOrNull() else group.owner
                     val address = if (!info.isGroupOwner) info.groupOwnerAddress
-                        else if (Build.VERSION.SDK_INT >= 35) source?.ipAddress else null
+                        else if (Build.VERSION.SDK_INT >= 35 && source != null) {
+                            // The shared JVM runtime uses API 34, one level before this public getter.
+                            runCatching { source.javaClass.getMethod("getIpAddress").invoke(source)
+                                as? java.net.InetAddress }.getOrNull()
+                        } else null
                     val port = if (Build.VERSION.SDK_INT >= 30) source?.wfdInfo?.controlPort else null
                     if (address != null) rtspServer.connectToSource(scope, address,
                         port?.takeIf { it in 1..65535 } ?: WFD_RTSP_PORT)
