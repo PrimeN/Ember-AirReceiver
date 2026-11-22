@@ -9,6 +9,9 @@ package app.ember.airreceiver.airplay.mirror
  */
 @Suppress("UNUSED_PARAMETER")
 class VideoDecoder(outputSurface: Any?) {
+    internal var onFrameRendered: (() -> Unit)? = null
+    internal fun initializeHevc(parameterSets: ByteArray, width: Int, height: Int) = Unit
+
 
     // Matches the real VideoDecoder API used by MirrorStreamServer (self-heal flag).
     var isHealthy = true
