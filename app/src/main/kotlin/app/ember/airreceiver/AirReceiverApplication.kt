@@ -22,6 +22,7 @@ class AirReceiverApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        app.ember.airreceiver.util.PlaybackFocus.manager = getSystemService(android.media.AudioManager::class.java)
         initLogging()
     }
 

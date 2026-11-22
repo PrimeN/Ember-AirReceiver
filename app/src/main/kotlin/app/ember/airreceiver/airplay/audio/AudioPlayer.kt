@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0 — see LICENSE and NOTICE.
 package app.ember.airreceiver.airplay.audio
 
+import app.ember.airreceiver.util.PlaybackFocus
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -31,6 +32,8 @@ import javax.crypto.spec.SecretKeySpec
  *   player.release()                                          // call when done
  */
 class AudioPlayer {
+    private val focus = PlaybackFocus()
+
 
     // Android's audio output — writes decoded PCM audio to hardware
     private var nextSequenceAfterFlush: Int? = null
@@ -165,6 +168,7 @@ class AudioPlayer {
 
             // Step 4: Write to AudioTrack for playback
             // WRITE_NON_BLOCKING returns immediately if the buffer is full (prevents stalls)
+            if (!focus.acquire()) return
             audioTrack?.write(pcm, 0, pcm.size, AudioTrack.WRITE_NON_BLOCKING)
 
         } catch (e: Exception) {
@@ -194,6 +198,7 @@ class AudioPlayer {
      */
     @Synchronized
     fun release() {
+        focus.release()
         Logger.d("Releasing AudioPlayer")
         try {
             audioTrack?.stop()

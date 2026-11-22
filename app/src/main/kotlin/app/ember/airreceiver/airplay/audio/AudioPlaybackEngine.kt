@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0 — see LICENSE and NOTICE.
 package app.ember.airreceiver.airplay.audio
 
+import app.ember.airreceiver.util.PlaybackFocus
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -53,6 +54,8 @@ internal class AudioPlaybackEngine(
     /** True while the audio session is running — the playback loop stops when it turns false. */
     private val isRunning: () -> Boolean
 ) {
+
+    private val focus = PlaybackFocus()
     private val key = SecretKeySpec(MirrorCrypto.audioKey(aesKey, ecdhSecret), "AES")
     private val iv = IvParameterSpec(aesIv.copyOf(16))
 
@@ -109,6 +112,7 @@ internal class AudioPlaybackEngine(
             runCatching { codec?.stop() }
             runCatching { codec?.release() }
             runCatching { alac?.close() }
+            focus.release()
             releaseAudioTrack()
             codec = null
             alac = null
@@ -227,6 +231,7 @@ internal class AudioPlaybackEngine(
 
     /** Finish partial writes and recreate a dead output once on the playback thread. */
     private fun writePcm(pcm: ByteArray) {
+        if (!focus.acquire()) return
         var offset = 0
         var retried = false
         while (offset < pcm.size && isRunning()) {

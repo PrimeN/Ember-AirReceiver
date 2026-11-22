@@ -3,6 +3,7 @@
 package app.ember.airreceiver.airplay.playback
 
 import android.media.AudioAttributes
+import app.ember.airreceiver.util.PlaybackFocus
 import android.media.MediaPlayer
 import android.view.Surface
 import app.ember.airreceiver.util.Logger
@@ -30,6 +31,18 @@ class AirPlayVideoPlayer(
     private val surfaceProvider: () -> Surface?,
     private val onEnded: () -> Unit = {},
 ) {
+    private var wantsPlayback = true
+    private val focus = PlaybackFocus { audible ->
+        synchronized(this) {
+            val player = mp
+            if (prepared && player != null) runCatching {
+                if (audible && wantsPlayback && focusGranted()) player.start()
+                else if (player.isPlaying) player.pause()
+            }
+        }
+    }
+    private fun focusGranted(): Boolean = focus.acquire()
+
     private var mp: MediaPlayer? = null
     @Volatile private var prepared = false
     @Volatile private var startFraction = 0.0
@@ -56,6 +69,7 @@ class AirPlayVideoPlayer(
     @Synchronized
     private fun start(url: String, startPositionFraction: Double, audioOnly: Boolean) {
         release()
+        wantsPlayback = true
         this.audioOnly = audioOnly
         startFraction = startPositionFraction.coerceIn(0.0, 1.0)
         Logger.i("AirPlay video: play url=$url start=$startFraction audioOnly=$audioOnly")
@@ -74,8 +88,9 @@ class AirPlayVideoPlayer(
             )
             if (!audioOnly) surfaceProvider()?.let { player.setSurface(it) }
             player.setOnPreparedListener { onPrepared(it) }
-            player.setOnCompletionListener { Logger.i("AirPlay video: completed"); onEnded() }
-            player.setOnErrorListener { _, what, extra ->
+            player.setOnCompletionListener { if (mp === it) { focus.release(); onEnded() } }
+            player.setOnErrorListener { failed, what, extra ->
+                if (mp === failed) { focus.release(); onEnded() }
                 Logger.e("AirPlay video error what=$what extra=$extra")
                 true   // handled — don't also fire onCompletion
             }
@@ -95,17 +110,20 @@ class AirPlayVideoPlayer(
         if (!audioOnly) surfaceProvider()?.let { runCatching { player.setSurface(it) } }
         if (startFraction > 0.0) runCatching { player.seekTo((startFraction * player.duration).toInt()) }
         prepared = true
-        runCatching { player.start() }
+        if (wantsPlayback && focus.acquire()) runCatching { player.start() }
         Logger.i("AirPlay video: prepared dur=${runCatching { player.duration }.getOrDefault(0)}ms → playing")
     }
 
     /** rate ≤ 0 pauses, > 0 resumes. */
     @Synchronized
     fun setRate(rate: Float) {
+        wantsPlayback = rate > 0f
+        if (!wantsPlayback) focus.release()
         val player = mp ?: return
+        if (!prepared) return
         runCatching {
             if (rate <= 0f) { if (player.isPlaying) player.pause() }
-            else { if (!player.isPlaying) player.start() }
+            else { if (!player.isPlaying && focus.acquire()) player.start() }
         }
     }
 
@@ -134,6 +152,8 @@ class AirPlayVideoPlayer(
 
     @Synchronized
     fun release() {
+        wantsPlayback = false
+        focus.release()
         mp?.let { p -> runCatching { p.stop() }; runCatching { p.release() } }
         mp = null
         prepared = false
