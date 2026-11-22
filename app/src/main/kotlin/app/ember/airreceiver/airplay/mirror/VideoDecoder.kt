@@ -39,6 +39,7 @@ class VideoDecoder(private val outputSurface: Surface) {
 
     // The underlying hardware decoder — null until initialize() is called
     @Volatile private var mediaCodec: MediaCodec? = null
+    internal var onFrameRendered: (() -> Unit)? = null
     internal var useMonotonicPresentationTime = false
     internal var codecToAvoid: String? = null
     private var renderCallbackThread: HandlerThread? = null
@@ -164,7 +165,10 @@ class VideoDecoder(private val outputSurface: Surface) {
             val thread = HandlerThread("Ember-AirReceiver-frame-events").apply { start() }
             renderCallbackThread = thread
             mediaCodec!!.setOnFrameRenderedListener({ codec, _, _ ->
-                if (codec === mediaCodec) StreamStats.videoPresented.incrementAndGet()
+                if (codec === mediaCodec) {
+                    StreamStats.videoPresented.incrementAndGet()
+                    onFrameRendered?.invoke()
+                }
             }, Handler(thread.looper))
         }.onFailure {
             renderCallbackThread?.quitSafely()

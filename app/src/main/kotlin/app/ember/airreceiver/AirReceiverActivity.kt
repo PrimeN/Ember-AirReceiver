@@ -384,7 +384,8 @@ class AirReceiverActivity : AppCompatActivity() {
             photoFrame != null -> showPhotoScreen(photoFrame)
             binder.miracastState == ProtocolState.NEGOTIATING ||
                 binder.miracastState == ProtocolState.CONNECTED -> showStreamingScreen()
-            binder.airPlayState == ProtocolState.CONNECTED -> showStreamingScreen()
+            binder.airPlayState == ProtocolState.NEGOTIATING ||
+                binder.airPlayState == ProtocolState.CONNECTED -> showStreamingScreen()
             binder.dlnaState == ProtocolState.CONNECTED -> showStreamingScreen()
             else -> hideStreamingScreen()
         }

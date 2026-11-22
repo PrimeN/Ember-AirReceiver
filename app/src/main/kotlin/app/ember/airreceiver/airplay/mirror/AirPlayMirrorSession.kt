@@ -15,6 +15,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import app.ember.airreceiver.airplay.StreamStats
 
 /**
  * AirPlayMirrorSession — Runs the AirPlay 2 mirroring streams of a session.
@@ -52,10 +55,13 @@ internal class AirPlayMirrorSession(
     /** Reports whether the session carries video (an audio-only session must not steal the screen). */
     private val onVideoSessionChanged: (hasVideo: Boolean) -> Unit,
     /** Publishes the protocol state of the session. */
-    private val onStateChanged: (ProtocolState) -> Unit
+    private val onStateChanged: (ProtocolState) -> Unit,
+    private val onVideoFailure: (String) -> Unit = {}
 ) {
 
     // AirPlay 2 mirroring: data stream server + event channel + keys (set during SETUP).
+    private var videoGeneration = 0L
+    private var firstFrameTimeout: Job? = null
     @Volatile private var mirrorServer: MirrorStreamServer? = null
     @Volatile private var audioServer: AudioStreamServer? = null
     @Volatile private var bufferedAudioServer: BufferedAudioServer? = null
@@ -104,8 +110,6 @@ internal class AirPlayMirrorSession(
         // AirPlay 2 NTP is receiver-initiated: poll the sender's timing port so macOS proceeds.
         val ntp = AirPlayNtpClient(remoteAddress, senderTimingPort).also { ntpClient = it; it.start(scope) }
         onSenderNameChanged("AirPlay")
-        onVideoSessionChanged(true)   // screen mirroring always needs the Surface
-        onStateChanged(ProtocolState.CONNECTED)
         Logger.i("Mirror keys set; eventPort=${event.localPort} timingPort=${ntp.localPort}")
         return event.localPort to ntp.localPort
     }
@@ -114,16 +118,58 @@ internal class AirPlayMirrorSession(
      * Mirror SETUP msg 2: start the data-stream server for the requested stream.
      * @return the data server's TCP port (macOS connects here to send H.264).
      */
+    @Synchronized
     internal fun startMirrorStream(streamConnectionId: Long): Int {
-        val aesKey = mirrorAesKey ?: run { Logger.e("mirror stream start before keys set"); return 0 }
+        val aesKey = mirrorAesKey ?: return 0
         val ecdhSecret = mirrorEcdhSecret ?: return 0
-        return MirrorStreamServer(
+        mirrorServer?.stop()
+        firstFrameTimeout?.cancel()
+        val generation = ++videoGeneration
+        val server = MirrorStreamServer(
             aesKey, ecdhSecret, streamConnectionId, videoSurfaceProvider, mirrorWidth, mirrorHeight,
-            timingClient = ntpClient
+            onFrameRendered = { reportFirstFrame(generation) }, timingClient = ntpClient
         )
-            .also { mirrorServer = it; it.start(scope); nowPlaying.videoPlaying = true; nowPlaying.emitNowPlaying() }
-            .dataPort
-            .also { Logger.i("Mirror data server started on port $it") }
+        mirrorServer = server
+        nowPlaying.videoPlaying = true
+        nowPlaying.emitNowPlaying()
+        onVideoSessionChanged(true)
+        onStateChanged(ProtocolState.NEGOTIATING)
+        firstFrameTimeout = scope.launch {
+            delay(15_000)
+            reportVideoTimeout(generation)
+        }
+        server.start(scope)
+        return server.dataPort
+    }
+
+    @Synchronized
+    private fun reportFirstFrame(generation: Long) {
+        if (generation != videoGeneration || firstFrameTimeout == null) return
+        firstFrameTimeout?.cancel()
+        firstFrameTimeout = null
+        onStateChanged(ProtocolState.CONNECTED)
+    }
+
+    @Synchronized
+    private fun reportVideoTimeout(generation: Long) {
+        if (generation != videoGeneration || firstFrameTimeout == null) return
+        firstFrameTimeout = null
+        val stage = StreamStats.videoStage
+        mirrorServer?.stop()
+        mirrorServer = null
+        nowPlaying.videoPlaying = false
+        nowPlaying.emitNowPlaying()
+        onVideoFailure("First frame timeout: ${stage}")
+        onStateChanged(ProtocolState.ERROR)
+    }
+
+    @Synchronized
+    private fun releaseVideo() {
+        ++videoGeneration
+        firstFrameTimeout?.cancel()
+        firstFrameTimeout = null
+        mirrorServer?.stop()
+        mirrorServer = null
     }
 
     /** Mirror SETUP audio stream (type 96): start the AAC-ELD / AAC-LC / ALAC audio server. @return (dataPort, controlPort). */
@@ -135,6 +181,10 @@ internal class AirPlayMirrorSession(
             .also { audioServer = it; it.start(scope) }
         nowPlaying.audioPlaying = true
         nowPlaying.emitNowPlaying()
+        if (mirrorServer == null) {
+            onVideoSessionChanged(false)
+            onStateChanged(ProtocolState.CONNECTED)
+        }
         Logger.i("Mirror audio server started: dataPort=${server.dataPort} controlPort=${server.controlPort}")
         return server.dataPort to server.controlPort
     }
@@ -155,8 +205,7 @@ internal class AirPlayMirrorSession(
 
     /** Stops ONLY the mirror video stream (macOS dynamic-stream TEARDOWN) — audio keeps playing. */
     internal fun stopMirrorVideo() {
-        mirrorServer?.stop()
-        mirrorServer = null
+        releaseVideo()
         nowPlaying.videoPlaying = false
         nowPlaying.emitNowPlaying()   // audio may still be playing → now-playing card can take over
         Logger.i("Mirror video stream stopped (audio playback continues)")
@@ -171,6 +220,10 @@ internal class AirPlayMirrorSession(
         // is not built yet. Tell the user instead of showing a silent, blank now-playing card.
         nowPlaying.npNotice = StreamSupport.noticeFor(StreamSupport.TYPE_BUFFERED_AUDIO)
         nowPlaying.emitNowPlaying()
+        if (mirrorServer == null) {
+            onVideoSessionChanged(false)
+            onStateChanged(ProtocolState.CONNECTED)
+        }
         Logger.i("Buffered audio server started: dataPort=${server.dataPort} (accepted; playback not yet supported)")
         return server.dataPort
     }
@@ -194,8 +247,7 @@ internal class AirPlayMirrorSession(
 
     /** Stops the mirror data server, the mirror audio server and the buffered audio server. */
     internal fun releaseStreams() {
-        mirrorServer?.stop()
-        mirrorServer = null
+        releaseVideo()
         audioServer?.stop()
         audioServer = null
         bufferedAudioServer?.stop()

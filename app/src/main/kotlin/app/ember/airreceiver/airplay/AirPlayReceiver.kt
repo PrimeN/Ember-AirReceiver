@@ -152,7 +152,11 @@ class AirPlayReceiver(
         nowPlaying = nowPlaying,
         onSenderNameChanged = { name -> onSenderNameChanged(name) },
         onVideoSessionChanged = { hasVideo -> onVideoSessionChanged(hasVideo) },
-        onStateChanged = { state -> emitState(state) }
+        onStateChanged = ::emitState,
+        onVideoFailure = { reason ->
+            sessionProgress.fail(reason)
+            onSessionSummary(sessionProgress.summary())
+        }
     )
 
     // AirPlay video URL mode (non-mirroring).

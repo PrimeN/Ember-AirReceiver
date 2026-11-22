@@ -40,6 +40,7 @@ class MirrorStreamServer(
     private val height: Int = 1080,
     private val maxQueueBytes: Long = DEFAULT_MAX_QUEUE_BYTES,
     private val maxQueueItems: Int = DEFAULT_MAX_QUEUE_ITEMS,
+    private val onFrameRendered: () -> Unit = {},
     private val timingClient: app.ember.airreceiver.airplay.timing.AirPlayNtpClient? = null,
 ) {
     private val cipher = MirrorCrypto.streamCipher(aesKey, ecdhSecret, streamConnectionId)
@@ -255,6 +256,7 @@ class MirrorStreamServer(
         StreamStats.videoRebuilds.incrementAndGet()
         val alternate = if (decoderSetupFailures >= 2) failedCodecName else activeCodecToAvoid
         val replacement = VideoDecoder(surface).apply {
+            onFrameRendered = { if (running && decoder === this) this@MirrorStreamServer.onFrameRendered() }
             useMonotonicPresentationTime = true
             codecToAvoid = alternate
         }

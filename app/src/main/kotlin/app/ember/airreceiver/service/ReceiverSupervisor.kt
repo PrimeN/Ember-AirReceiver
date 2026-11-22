@@ -158,6 +158,11 @@ internal class ReceiverSupervisor(
             onStateChanged = { state ->
                 _airPlayState.value = state
                 when (state) {
+                    ProtocolState.NEGOTIATING -> {
+                        _photoFrame.value = null
+                        _activeConnection.value = null
+                        if (pendingHasVideo) bringToFront()
+                    }
                     ProtocolState.CONNECTED   -> {
                         _photoFrame.value = null
                         _activeConnection.value =
