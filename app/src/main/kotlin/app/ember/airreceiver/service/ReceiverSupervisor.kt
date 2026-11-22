@@ -183,7 +183,11 @@ internal class ReceiverSupervisor(
         _miracastState.value = ProtocolState.ADVERTISING
         miracastReceiver = MiracastReceiver(
             context = context,
-            onStateChanged = { state -> _miracastState.value = state }
+            surfaceProvider = surfaceProvider,
+            onStateChanged = { state ->
+                _miracastState.value = state
+                if (state == ProtocolState.NEGOTIATING) bringToFront()
+            }
         ).also { it.start() }
         Logger.d("Miracast receiver started")
     }

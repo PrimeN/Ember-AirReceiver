@@ -52,6 +52,9 @@ enum class ProtocolState {
     /** Protocol is enabled and advertising — waiting for a sender. */
     ADVERTISING,
 
+    /** Transport selected, awaiting rendered media. */
+    NEGOTIATING,
+
     /** A sender is actively connected and streaming. */
     CONNECTED,
 

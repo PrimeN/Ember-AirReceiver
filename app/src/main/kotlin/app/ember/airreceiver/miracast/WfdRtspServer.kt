@@ -12,6 +12,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.OutputStream
 import java.net.ServerSocket
+import android.view.Surface
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.Socket
 
 /**
@@ -37,7 +40,9 @@ import java.net.Socket
  */
 internal class WfdRtspServer(
     private val onSessionStarted: () -> Unit,
-    private val onSessionStopped: () -> Unit
+    private val onSessionStopped: () -> Unit,
+    private val surface: () -> Surface? = { null },
+    private val onPreparing: () -> Unit = {}
 ) {
     private val requestReader = RtspRequestReader(
         maxMessageBytes = MAX_MESSAGE_BYTES,
@@ -48,7 +53,7 @@ internal class WfdRtspServer(
     @Volatile private var serverSocket: ServerSocket? = null
     @Volatile private var activeClient: Socket? = null
     private var currentCSeq = 0
-    private var sessionStarted = false
+    @Volatile private var media: WfdMedia? = null
 
     fun start(scope: CoroutineScope) {
         if (running) return
@@ -68,11 +73,32 @@ internal class WfdRtspServer(
         }
         activeClient = null
         serverSocket = null
-        if (sessionStarted) {
-            sessionStarted = false
-            onSessionStopped()
+    }
+
+    @Synchronized
+    private fun claim(socket: Socket): Boolean {
+        if (!running || activeClient != null) return false
+        activeClient = socket
+        return true
+    }
+
+    fun connectToSource(scope: CoroutineScope, peer: InetAddress, port: Int) {
+        scope.launch(Dispatchers.IO) {
+            val socket = Socket()
+            if (!claim(socket)) { socket.close(); return@launch }
+            try {
+                socket.connect(InetSocketAddress(peer, port), 5000)
+                handleClient(socket)
+            } catch (e: Exception) {
+                Logger.w("Mirror control connection unavailable")
+            } finally {
+                socket.close()
+                synchronized(this@WfdRtspServer) { if (activeClient === socket) activeClient = null }
+            }
         }
     }
+
+    fun disconnect() { runCatching { activeClient?.close() } }
 
     private fun runServer(scope: CoroutineScope) {
         try {
@@ -80,12 +106,11 @@ internal class WfdRtspServer(
             Logger.i("WFD RTSP server listening on port ${MiracastReceiver.WFD_RTSP_PORT}")
             while (running && scope.isActive) {
                 val client = serverSocket!!.accept()
-                if (activeClient != null && !activeClient!!.isClosed) {
+                if (!claim(client)) {
                     sendServiceUnavailable(client)
                     client.close()
                     continue
                 }
-                activeClient = client
                 handleClient(client)
             }
         } catch (e: Exception) {
@@ -97,12 +122,63 @@ internal class WfdRtspServer(
         try {
             val input = socket.getInputStream()
             val output = socket.getOutputStream()
+            val receiver = WfdMedia(socket.inetAddress, surface,
+                { if (activeClient === socket && !socket.isClosed) onSessionStarted() },
+                { socket.close() })
+            media = receiver
+            var nextSequence = 1
+            var setupSequence = -1
+            var playSequence = -1
+            var playing = false
+            var session = ""
+            var presentation = "rtsp://${socket.inetAddress.hostAddress}/wfd1.0/streamid=0"
+            fun command(method: String, uri: String, extra: String = ""): Int {
+                val sequence = nextSequence++
+                output.write("$method $uri RTSP/1.0\r\nCSeq: $sequence\r\n${extra}\r\n".toByteArray())
+                output.flush()
+                return sequence
+            }
+            fun startMedia() {
+                if (playing) return
+                playing = true
+                onPreparing()
+                receiver.start()
+            }
+            socket.soTimeout = 90000
             while (running && !socket.isClosed) {
                 val request = requestReader.read(input) ?: break
-                currentCSeq = request.headers["CSeq"]?.toIntOrNull() ?: 0
+                fun header(name: String) = request.headers.entries.firstOrNull { it.key.equals(name, true) }?.value
+                currentCSeq = header("CSeq")?.toIntOrNull() ?: 0
+                if (request.method == "RTSP/1.0") {
+                    if (request.uri != "200") break
+                    if (currentCSeq == setupSequence) {
+                        session = header("Session")?.substringBefore(';') ?: break
+                        val transport = header("Transport").orEmpty()
+                        if (!transport.startsWith("RTP/AVP/UDP", true) && !transport.startsWith("RTP/AVP;", true)) break
+                        playSequence = command("PLAY", presentation, "Session: $session\r\n")
+                    } else if (currentCSeq == playSequence) startMedia()
+                    continue
+                }
                 val response = routeRequest(request)
                 sendResponse(output, response)
-                if (request.method == "TEARDOWN") break
+                when (request.method) {
+                    "OPTIONS" -> command("OPTIONS", "*", "Require: org.wfa.wfd1.0\r\n")
+                    "PLAY" -> if (response.statusCode == 200) startMedia()
+                    "TEARDOWN" -> break
+                    "SET_PARAMETER" -> {
+                        val params = request.body.lineSequence().associate {
+                            it.substringBefore(':').trim() to it.substringAfter(':', "").trim()
+                        }
+                        params["wfd_presentation_URL"]?.substringBefore(' ')?.takeIf {
+                            it.startsWith("rtsp://") && it.none(Char::isWhitespace)
+                        }?.let { presentation = it }
+                        when (params["wfd_trigger_method"]) {
+                            "SETUP" -> setupSequence = command("SETUP", presentation,
+                                "Transport: RTP/AVP/UDP;unicast;client_port=${receiver.port}\r\n")
+                            "TEARDOWN" -> { command("TEARDOWN", presentation, "Session: $session\r\n"); break }
+                        }
+                    }
+                }
             }
         } catch (e: Exception) {
             if (running) Logger.e("Error handling WFD RTSP client", e)
@@ -112,11 +188,10 @@ internal class WfdRtspServer(
             } catch (e: Exception) {
                 Logger.e("Error closing WFD RTSP client socket (non-fatal)", e)
             }
-            activeClient = null
-            if (sessionStarted) {
-                sessionStarted = false
-                onSessionStopped()
-            }
+            media?.close()
+            media = null
+            if (running) onSessionStopped()
+            synchronized(this) { if (activeClient === socket) activeClient = null }
         }
     }
 
@@ -135,30 +210,13 @@ internal class WfdRtspServer(
                 body = sinkParameters()
             )
             "SET_PARAMETER" -> RtspResponse(statusCode = 200, statusMessage = "OK")
-            "SETUP" -> RtspResponse(
-                statusCode = 200,
-                statusMessage = "OK",
-                headers = mapOf(
-                    "Session" to WFD_SESSION_ID,
-                    "Transport" to "RTP/AVP/TCP;unicast;interleaved=0-1"
-                )
-            )
-            "PLAY" -> {
-                if (!sessionStarted) {
-                    sessionStarted = true
-                    onSessionStarted()
-                }
-                RtspResponse(
-                    statusCode = 200,
-                    statusMessage = "OK",
-                    headers = mapOf("Session" to WFD_SESSION_ID)
-                )
-            }
-            "PAUSE" -> RtspResponse(
-                statusCode = 200,
-                statusMessage = "OK",
-                headers = mapOf("Session" to WFD_SESSION_ID)
-            )
+            "SETUP" -> if (request.headers.entries.any { it.key.equals("Transport", true) &&
+                    it.value.startsWith("RTP/AVP/UDP", true) } && media != null) {
+                RtspResponse(200, "OK", mapOf("Session" to WFD_SESSION_ID,
+                    "Transport" to "RTP/AVP/UDP;unicast;server_port=${media?.port}"))
+            } else RtspResponse(461, "Unsupported Transport")
+            "PLAY" -> if (media == null) RtspResponse(455, "Session unavailable")
+                else RtspResponse(200, "OK", mapOf("Session" to WFD_SESSION_ID))
             "TEARDOWN" -> RtspResponse(
                 statusCode = 200,
                 statusMessage = "OK",
@@ -170,9 +228,9 @@ internal class WfdRtspServer(
 
     private fun sinkParameters(): String =
         listOf(
-            "wfd_audio_codecs: LPCM 00000003 00",
+            "wfd_audio_codecs: AAC 00000001 00",
             "wfd_video_formats: 00 00 02 10 0001FFFF 00000000 00000000 00 0000 0000 00 none none",
-            "wfd_client_rtp_ports: RTP/AVP/TCP;unicast 0 0 mode=play",
+            "wfd_client_rtp_ports: RTP/AVP/UDP;unicast ${media?.port ?: 0} 0 mode=play",
             "wfd_content_protection: none",
             "wfd_display_edid: none",
             "wfd_coupled_sink: none",

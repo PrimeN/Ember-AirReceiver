@@ -382,6 +382,8 @@ class AirReceiverActivity : AppCompatActivity() {
             // of the black video surface. Set whenever audio plays without video.
             nowPlaying != null -> showNowPlayingScreen(nowPlaying)
             photoFrame != null -> showPhotoScreen(photoFrame)
+            binder.miracastState == ProtocolState.NEGOTIATING ||
+                binder.miracastState == ProtocolState.CONNECTED -> showStreamingScreen()
             binder.airPlayState == ProtocolState.CONNECTED -> showStreamingScreen()
             binder.dlnaState == ProtocolState.CONNECTED -> showStreamingScreen()
             else -> hideStreamingScreen()

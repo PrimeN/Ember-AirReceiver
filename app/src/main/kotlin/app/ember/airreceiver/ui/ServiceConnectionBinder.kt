@@ -62,6 +62,9 @@ internal class ServiceConnectionBinder(
     var airPlayState: ProtocolState = ProtocolState.DISABLED
         private set
 
+    var miracastState: ProtocolState = ProtocolState.DISABLED
+        private set
+
     /** Mirrored DLNA protocol state — the last value of [AirReceiverService.dlnaState]. */
     var dlnaState: ProtocolState = ProtocolState.DISABLED
         private set
@@ -156,6 +159,12 @@ internal class ServiceConnectionBinder(
         scope.launch {
             svc.airPlayState.collectLatest { state ->
                 airPlayState = state
+                onStateChanged()
+            }
+        }
+        scope.launch {
+            svc.miracastState.collectLatest { state ->
+                miracastState = state
                 onStateChanged()
             }
         }

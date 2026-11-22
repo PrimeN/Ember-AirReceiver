@@ -267,6 +267,8 @@ class HomeFragment : Fragment() {
             )
             ProtocolState.ADVERTISING -> Triple(R.string.protocol_state_advertising, R.color.status_running,   R.string.protocol_detail_waiting)
             ProtocolState.CONNECTED   -> Triple(R.string.protocol_state_connected,   R.color.status_running,   R.string.protocol_detail_connected)
+            ProtocolState.NEGOTIATING -> Triple(R.string.protocol_state_preparing,
+                R.color.status_transitioning, R.string.protocol_detail_preparing)
             ProtocolState.PERMISSION_REQUIRED -> Triple(
                 R.string.protocol_state_permission_required, R.color.status_stopped,
                 R.string.protocol_detail_miracast_permission

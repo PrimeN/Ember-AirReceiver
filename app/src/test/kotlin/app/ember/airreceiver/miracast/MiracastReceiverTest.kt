@@ -115,7 +115,7 @@ class MiracastReceiverTest {
     }
 
     @Test
-    fun `WFD RTSP PLAY emits connected state once`() {
+    fun `WFD PLAY without a media session does not report a connection`() {
         var started = 0
         val server = WfdRtspServer(
             onSessionStarted = { started++ },
@@ -128,9 +128,9 @@ class MiracastReceiverTest {
             body = ""
         )
 
-        assertEquals(200, server.routeRequest(request).statusCode)
-        assertEquals(200, server.routeRequest(request).statusCode)
+        assertEquals(455, server.routeRequest(request).statusCode)
+        assertEquals(455, server.routeRequest(request).statusCode)
 
-        assertEquals(1, started)
+        assertEquals(0, started)
     }
 }

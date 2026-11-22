@@ -2,6 +2,10 @@
 // Licensed under the Apache License, Version 2.0 — see LICENSE and NOTICE.
 package app.ember.airreceiver.miracast
 
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
+import android.view.Surface
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.wifi.p2p.WifiP2pManager
@@ -50,6 +54,7 @@ import kotlinx.coroutines.cancel
  */
 class MiracastReceiver(
     private val context: Context,
+    private val surfaceProvider: () -> Surface? = { null },
     private val onStateChanged: (ProtocolState) -> Unit
 ) {
 
@@ -68,7 +73,10 @@ class MiracastReceiver(
 
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + job)
+    private var groupListener: BroadcastReceiver? = null
     private val rtspServer = WfdRtspServer(
+        surface = surfaceProvider,
+        onPreparing = { onStateChanged(ProtocolState.NEGOTIATING) },
         onSessionStarted = {
             Logger.i("Miracast WFD session connected")
             onStateChanged(ProtocolState.CONNECTED)
@@ -101,6 +109,8 @@ class MiracastReceiver(
      */
     fun stop() {
         Logger.i("MiracastReceiver stopping")
+        groupListener?.let { runCatching { context.unregisterReceiver(it) } }
+        groupListener = null
         // Each step is released on its own so a failing P2P call cannot keep the WFD RTSP
         // server bound or the P2P channel open.
         try {
@@ -183,6 +193,35 @@ class MiracastReceiver(
         isAdvertising = false
     }
 
+    private fun monitorGroup(manager: WifiP2pManager, channel: Channel) {
+        fun refresh() {
+            if (!job.isActive) return
+            manager.requestConnectionInfo(channel) { info ->
+                if (info == null || !info.groupFormed) {
+                    rtspServer.disconnect()
+                    return@requestConnectionInfo
+                }
+                manager.requestGroupInfo(channel) { group ->
+                    if (group == null || !job.isActive) return@requestGroupInfo
+                    val source = if (info.isGroupOwner) group.clientList.firstOrNull() else group.owner
+                    val address = if (!info.isGroupOwner) info.groupOwnerAddress
+                        else if (Build.VERSION.SDK_INT >= 35) source?.ipAddress else null
+                    val port = if (Build.VERSION.SDK_INT >= 30) source?.wfdInfo?.controlPort else null
+                    if (address != null) rtspServer.connectToSource(scope, address,
+                        port?.takeIf { it in 1..65535 } ?: WFD_RTSP_PORT)
+                }
+            }
+        }
+        val listener = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) { refresh() }
+        }
+        val filter = IntentFilter(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
+        if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(listener, filter, Context.RECEIVER_EXPORTED)
+        else context.registerReceiver(listener, filter)
+        groupListener = listener
+        refresh()
+    }
+
     /**
      * Registers the WFD local service record used by Wi-Fi Direct discovery.
      *
@@ -209,7 +248,7 @@ class MiracastReceiver(
             "wfd_session_available" to "1",
             "wfd_rtsp_port" to WFD_RTSP_PORT.toString(),
             "wfd_video_formats" to "h264-chp,h264-cbp",
-            "wfd_audio_codecs" to "lpcm"
+            "wfd_audio_codecs" to "aac"
         )
         val localService = WifiP2pDnsSdServiceInfo.newInstance(
             SERVICE_INSTANCE_NAME,
@@ -223,9 +262,12 @@ class MiracastReceiver(
                 localService,
                 object : WifiP2pManager.ActionListener {
                     override fun onSuccess() {
+                        if (!job.isActive) return
                         serviceInfo = localService
                         isAdvertising = true
                         rtspServer.start(scope)
+                        runCatching { monitorGroup(manager, activeChannel) }
+                            .onFailure { Logger.w("Mirror group updates unavailable") }
                         Logger.i("Miracast WFD P2P service advertised")
                         onStateChanged(ProtocolState.ADVERTISING)
                     }
