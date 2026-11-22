@@ -10,6 +10,10 @@ import app.ember.airreceiver.util.Logger
 import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Semaphore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.isActive
 
@@ -32,6 +36,7 @@ internal class RtspServer(
     private val context: android.content.Context,
     private val sessionState: RtspSessionState,
     private val router: RtspRequestRouter,
+    private val senderHls: SenderHlsTransport,
     private val onStreamingStopped: () -> Unit
 ) {
 
@@ -44,6 +49,25 @@ internal class RtspServer(
     internal var running = false
 
     private var currentCSeq: Int = 0
+    private val accepted = ConcurrentHashMap.newKeySet<Socket>()
+    // One media control connection, one event channel and a bounded number of short requests.
+    private val connectionSlots = Semaphore(5)
+
+    internal fun closeAcceptedSockets() {
+        accepted.forEach { runCatching { it.close() } }
+    }
+
+    @Synchronized
+    private fun claimControl(socket: Socket): Boolean {
+        if (!running || activeClient != null) return false
+        activeClient = socket
+        return true
+    }
+
+    @Synchronized
+    private fun releaseControl(socket: Socket) {
+        if (activeClient === socket) activeClient = null
+    }
 
     private val requestReader = RtspRequestReader(
         maxMessageBytes = MAX_MESSAGE_BYTES,
@@ -130,17 +154,21 @@ internal class RtspServer(
 
             while (running && scope.isActive) {
                 val clientSocket = serverSocket!!.accept()
-                Logger.i("New client connected: ${clientSocket.inetAddress.hostAddress}")
-
-                if (activeClient != null && !activeClient!!.isClosed) {
-                    Logger.w("Rejecting second client — already streaming")
-                    sendServiceUnavailable(clientSocket)
+                if (!connectionSlots.tryAcquire()) {
                     clientSocket.close()
                     continue
                 }
-
-                activeClient = clientSocket
-                handleClient(clientSocket)
+                accepted.add(clientSocket)
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        clientSocket.use { if (running) dispatchAccepted(it) }
+                    } catch (e: java.io.IOException) {
+                        if (running) Logger.d("AirPlay connection closed")
+                    } finally {
+                        accepted.remove(clientSocket)
+                        connectionSlots.release()
+                    }
+                }
             }
         } catch (e: Exception) {
             if (running) {
@@ -151,7 +179,44 @@ internal class RtspServer(
         }
     }
 
-    private fun handleClient(socket: Socket) {
+    private fun dispatchAccepted(socket: Socket) {
+        socket.soTimeout = 8_000
+        val first = requestReader.read(socket.getInputStream()) ?: return
+        if (first.method == "POST" && first.uri == "/reverse") {
+            if (!senderHls.attach(first, socket)) {
+                sendResponse(socket.getOutputStream(), RtspResponse(409, "Conflict", protocol = "HTTP/1.1"))
+                return
+            }
+            try {
+                socket.soTimeout = 0
+                while (running) {
+                    val event = requestReader.read(socket.getInputStream()) ?: break
+                    if (event.method == "POST" && event.uri == "/action") {
+                        sendResponse(socket.getOutputStream(), senderHls.handleAction(event, socket.inetAddress))
+                    }
+                }
+            } finally {
+                senderHls.disconnected(socket)
+            }
+            return
+        }
+        if (first.method == "POST" && first.uri == "/action") {
+            sendResponse(socket.getOutputStream(), senderHls.handleAction(first, socket.inetAddress))
+            return
+        }
+        if (senderHls.ownsPlayback(socket.inetAddress) && !senderHls.matches(first, socket.inetAddress)) {
+            sendServiceUnavailable(socket)
+            return
+        }
+        if (!claimControl(socket)) {
+            sendServiceUnavailable(socket)
+            return
+        }
+        socket.soTimeout = 0
+        handleClient(socket, first)
+    }
+
+    private fun handleClient(socket: Socket, first: RtspRequest) {
         val inputStream = socket.getInputStream()
         val outputStream = socket.getOutputStream()
 
@@ -161,10 +226,14 @@ internal class RtspServer(
         currentRemoteAddress = socket.inetAddress
 
         try {
-            while (running && !socket.isClosed) {
-                val request = requestReader.read(inputStream) ?: break
+            var next: RtspRequest? = first
+            while (running && !socket.isClosed && next != null) {
+                val request = next
+                next = null
                 currentCSeq = request.headers["CSeq"]?.toIntOrNull() ?: 0
-                val response = router.routeRequest(request)
+                val response = if (request.method == "POST" && request.uri == "/action") {
+                    senderHls.handleAction(request, socket.inetAddress)
+                } else router.routeRequest(request)
                 sendResponse(outputStream, response)
 
                 // After RECORD on a legacy SDP session: a session WITH video switches to interleaved
@@ -177,6 +246,7 @@ internal class RtspServer(
                     Logger.d("RTSP handshake complete — switching to interleaved RTP (video)")
                     break
                 }
+                next = requestReader.read(inputStream)
             }
 
             val session = currentSession
@@ -196,7 +266,6 @@ internal class RtspServer(
         } finally {
             Logger.i("Client disconnected")
             socket.close()
-            activeClient = null
             currentSession = null
             pairingSession = null
             fairPlay = null
@@ -204,7 +273,11 @@ internal class RtspServer(
             currentRemoteAddress = null
             activeStreamTypes.clear()
             setupCount = 0
-            onStreamingStopped()
+            try {
+                if (!senderHls.ownsPlayback(socket.inetAddress)) onStreamingStopped()
+            } finally {
+                releaseControl(socket)
+            }
         }
     }
 

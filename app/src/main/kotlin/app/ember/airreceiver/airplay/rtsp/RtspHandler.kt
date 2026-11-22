@@ -138,14 +138,22 @@ open class RtspHandler(
         )
     }
 
+    private val senderHls = SenderHlsTransport(onVideoPlay, onVideoStop)
+
     /** The AirPlay URL-video mode: /play, /rate, /scrub, /stop and /playback-info. */
     private val videoUrlHandler: RtspVideoUrlHandler by lazy {
         RtspVideoUrlHandler(
             onVideoPlay = onVideoPlay,
             onVideoRate = onVideoRate,
             onVideoScrub = onVideoScrub,
-            onVideoStop = onVideoStop,
-            onPlaybackInfo = onPlaybackInfo
+            onVideoStop = {
+                senderHls.stopPlayback()
+                onVideoStop()
+            },
+            onPlaybackInfo = onPlaybackInfo,
+            onSenderPlaylist = { request, url, offset ->
+                senderHls.play(request, sessionState.currentRemoteAddress, url, offset)
+            }
         )
     }
 
@@ -181,6 +189,7 @@ open class RtspHandler(
             context = context,
             sessionState = sessionState,
             router = router,
+            senderHls = senderHls,
             onStreamingStopped = onStreamingStopped
         )
     }
@@ -231,6 +240,8 @@ open class RtspHandler(
         // port 7000 bound for the next start.
         releaseQuietly("RTSP client socket") { activeClient?.close() }
         releaseQuietly("RTSP server socket") { serverSocket?.close() }
+        server.closeAcceptedSockets()
+        senderHls.close()
         activeClient = null
         serverSocket = null
         Logger.i("RTSP handler stopped")

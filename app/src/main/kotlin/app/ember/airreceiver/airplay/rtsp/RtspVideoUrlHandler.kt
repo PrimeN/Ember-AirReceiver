@@ -28,7 +28,8 @@ internal class RtspVideoUrlHandler(
     private val onVideoRate: (rate: Float) -> Unit,
     private val onVideoScrub: (positionSec: Double) -> Unit,
     private val onVideoStop: () -> Unit,
-    private val onPlaybackInfo: () -> app.ember.airreceiver.airplay.playback.PlaybackInfo?
+    private val onPlaybackInfo: () -> app.ember.airreceiver.airplay.playback.PlaybackInfo?,
+    private val onSenderPlaylist: (RtspRequest, String, MediaStartPosition) -> Int? = { _, _, _ -> null }
 ) {
 
     /** POST /play — a media URL to play (binary/XML plist or legacy text body). */
@@ -47,7 +48,11 @@ internal class RtspVideoUrlHandler(
             return RtspResponse(400, "Bad Request", protocol = request.responseProtocol())
         }
         Logger.i("Accepted AirPlay URL playback request")
-        onVideoPlay(url, start)
+        val relayStatus = onSenderPlaylist(request, url, start)
+        if (relayStatus == null) onVideoPlay(url, start)
+        if (relayStatus != null && relayStatus != 200) {
+            return RtspResponse(relayStatus, "Playlist Unavailable", protocol = request.responseProtocol())
+        }
         return RtspResponse(200, "OK", protocol = request.responseProtocol())
     }
 

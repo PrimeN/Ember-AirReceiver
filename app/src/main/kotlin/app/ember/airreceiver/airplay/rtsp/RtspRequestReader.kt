@@ -22,8 +22,8 @@ internal class RtspRequestReader(
      * Returns null on clean EOF, malformed input, or payloads over the configured limits.
      */
     fun read(inputStream: InputStream): RtspRequest? {
-        val requestLine = readLine(inputStream) ?: return null
-        if (requestLine.isBlank()) return read(inputStream)
+        var requestLine = readLine(inputStream) ?: return null
+        while (requestLine.isBlank()) requestLine = readLine(inputStream) ?: return null
 
         val parts = requestLine.split(" ")
         if (parts.size < 3) {
@@ -75,7 +75,7 @@ internal class RtspRequestReader(
         uri: String,
         headers: Map<String, String>
     ): ByteArray? {
-        val contentLength = headers["Content-Length"]?.toIntOrNull() ?: 0
+        val contentLength = headers.entries.firstOrNull { it.key.equals("Content-Length", true) }?.value?.toIntOrNull() ?: 0
         val bodyLimit = if (method == "PUT" && uri.substringBefore("?") == PhotoHandler.PHOTO_PATH) {
             maxPhotoBytes
         } else {
