@@ -48,6 +48,7 @@ sourceSets {
                 // NotificationCompat + R, the supervisor needs the notification manager.
                 "**/service/ServiceNotificationManager.kt",
                 "**/service/ReceiverSupervisor.kt",
+                "**/service/EmberMediaSession.kt",
                 "**/AirReceiverActivityTest.kt",
                 // This test exercises the actual MediaCodec submission path, not the JVM stub.
                 "**/airplay/mirror/VideoSubmissionTest.kt",

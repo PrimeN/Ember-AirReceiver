@@ -21,6 +21,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import app.ember.airreceiver.airplay.playback.PlaybackInfo
 
 /**
  * AirReceiverService — Android ForegroundService that hosts all receiver protocols.
@@ -89,6 +95,9 @@ class AirReceiverService : Service() {
     private lateinit var receivers: ReceiverSupervisor
 
     // Network monitor — re-advertises over mDNS after a network outage.
+    private lateinit var mediaControls: EmberMediaSession
+    private val urlPlayback = MutableStateFlow<PlaybackInfo?>(null)
+    internal val airPlayUrlPlayback = urlPlayback.asStateFlow()
     private lateinit var networkRecovery: NetworkRecoveryMonitor
 
     // ─── Service Lifecycle ───────────────────────────────────────────────────
@@ -111,6 +120,18 @@ class AirReceiverService : Service() {
             isServiceRunning = { stateBus.serviceState.value == ServiceState.Running },
             onNetworkRestored = { receivers.readvertiseAll() }
         )
+        mediaControls = EmberMediaSession(this, ::setAirPlayUrlRate, ::seekAirPlayUrl, ::stopAirPlayUrl, ::sendAirPlayRemoteCommand)
+        serviceScope.launch {
+            while (isActive) {
+                val info = receivers.airPlayUrlPlayback()
+                urlPlayback.value = info
+                val canControl = receivers.canControlAirPlaySender()
+                withContext(Dispatchers.Main) {
+                    mediaControls.update(info, nowPlaying.value, canControl)
+                }
+                delay(350)
+            }
+        }
         notifications.createNotificationChannel()
         networkRecovery.registerNetworkCallback()
     }
@@ -170,6 +191,18 @@ class AirReceiverService : Service() {
         receivers.sendAirPlayRemoteCommand(command)
     }
 
+    internal fun setAirPlayUrlRate(rate: Float) {
+        serviceScope.launch { receivers.setAirPlayUrlRate(rate) }
+    }
+
+    internal fun seekAirPlayUrl(seconds: Double) {
+        serviceScope.launch { receivers.seekAirPlayUrl(seconds) }
+    }
+
+    internal fun stopAirPlayUrl() {
+        serviceScope.launch { receivers.stopAirPlayUrl() }
+    }
+
     /**
      * Sends a DAVP transport command (TV remote → DLNA controller), e.g. play/pause or skip.
      * Bound Activities call this from media-key events.
@@ -183,6 +216,7 @@ class AirReceiverService : Service() {
         networkRecovery.unregisterNetworkCallback()
         receivers.stopAllReceiversInternal()
         serviceJob.cancel()
+        mediaControls.release()
         super.onDestroy()
     }
 

@@ -58,6 +58,8 @@ class DacpClient(context: Context) {
     /** True once we have a sender identity (so the UI can know remote control is available). */
     val isAvailable: Boolean get() = activeRemote != null
 
+    internal fun canControl(): Boolean = resolvedHost != null && resolvedPort != 0
+
     /** Sends a DACP command (e.g. "playpause", "nextitem"). No-op until the service is resolved. */
     fun sendCommand(command: String) {
         val token = activeRemote ?: run { Logger.d("DACP '$command' ignored — no sender"); return }

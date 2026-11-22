@@ -61,7 +61,7 @@ internal class ReceiverSupervisor(
     private val _pairingPin = states.pairingPinFlow
 
     // Receiver instances — null when not running
-    private var airPlayReceiver: AirPlayReceiver? = null
+    @Volatile private var airPlayReceiver: AirPlayReceiver? = null
     private var miracastReceiver: MiracastReceiver? = null
     private var castReceiver: CastReceiver? = null
     private var dlnaReceiver: DlnaReceiver? = null
@@ -275,6 +275,12 @@ internal class ReceiverSupervisor(
      * what the Mac/iPhone is streaming. No-op if no AirPlay sender has advertised a DACP
      * identity.
      */
+    internal fun canControlAirPlaySender() = airPlayReceiver?.canControlSender() == true
+    internal fun airPlayUrlPlayback() = airPlayReceiver?.urlPlayback()
+    internal fun setAirPlayUrlRate(rate: Float) = airPlayReceiver?.urlRate(rate)
+    internal fun seekAirPlayUrl(seconds: Double) = airPlayReceiver?.urlSeek(seconds)
+    internal fun stopAirPlayUrl() = airPlayReceiver?.stopUrlPlayback()
+
     internal fun sendAirPlayRemoteCommand(command: String) {
         airPlayReceiver?.sendRemoteCommand(command)
     }

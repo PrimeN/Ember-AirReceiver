@@ -235,6 +235,12 @@ class AirPlayReceiver(
      */
     fun sendRemoteCommand(command: String) = dacpClient.sendCommand(command)
 
+    internal fun canControlSender() = dacpClient.canControl()
+    internal fun urlPlayback() = urlSession.info()
+    internal fun urlRate(rate: Float) = urlSession.setRate(rate)
+    internal fun urlSeek(seconds: Double) = urlSession.scrub(seconds)
+    internal fun stopUrlPlayback() = urlSession.stopUrlVideo()
+
     /** True once a sender has advertised DACP reverse-control (so the TV remote can drive playback). */
     fun isRemoteControlAvailable(): Boolean = dacpClient.isAvailable
 

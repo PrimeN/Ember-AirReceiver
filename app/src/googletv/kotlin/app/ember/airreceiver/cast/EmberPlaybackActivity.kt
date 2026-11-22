@@ -12,6 +12,7 @@ import android.widget.VideoView
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import app.ember.airreceiver.R
+import app.ember.airreceiver.service.EmberMediaSession
 import app.ember.airreceiver.settings.SettingsRepository
 import app.ember.airreceiver.util.FetchableUrlPolicy
 import com.google.android.gms.cast.MediaLoadRequestData
@@ -105,6 +106,7 @@ class EmberPlaybackActivity : FragmentActivity() {
         val view = VideoView(this)
         video = view
         container.addView(view, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
+        EmberMediaSession.externalPlaybackActive = true
         playWhenReady = request.autoplay != false
         publish(PlaybackStateCompat.STATE_BUFFERING)
         view.setOnPreparedListener {
@@ -127,6 +129,7 @@ class EmberPlaybackActivity : FragmentActivity() {
                 val message = getString(R.string.ember_load_failed)
                 result.trySetException(IllegalStateException(message))
                 pending = null
+                EmberMediaSession.externalPlaybackActive = false
                 publish(PlaybackStateCompat.STATE_ERROR)
                 Toast.makeText(this, message, Toast.LENGTH_LONG).show()
             }
@@ -145,6 +148,7 @@ class EmberPlaybackActivity : FragmentActivity() {
     }
 
     private fun stopPlayback() {
+        EmberMediaSession.externalPlaybackActive = false
         pending?.trySetException(IllegalStateException(getString(R.string.ember_load_replaced)))
         pending = null
         val old = video
