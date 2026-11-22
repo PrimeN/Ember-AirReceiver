@@ -217,7 +217,7 @@ class SettingsFragment : Fragment() {
 
         rowDiagnostics.setOnClickListener { openDiagnostics() }
         rowPrivacy.setOnClickListener { openPrivacyPolicy() }
-        rowReset.setOnClickListener { resetSettings() }
+        rowReset.setOnClickListener { showResetConfirmation() }
     }
 
     /**
@@ -356,6 +356,20 @@ class SettingsFragment : Fragment() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    private fun showResetConfirmation() {
+        val dialog = AlertDialog.Builder(requireContext())
+            .setTitle(R.string.setting_reset_defaults)
+            .setMessage(R.string.setting_reset_confirmation)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.setting_reset_action) { _, _ -> resetSettings() }
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus()
+        }
+        dialog.show()
     }
 
     private fun resetSettings() {
