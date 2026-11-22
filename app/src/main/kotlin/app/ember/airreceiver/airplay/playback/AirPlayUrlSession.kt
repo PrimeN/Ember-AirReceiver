@@ -40,28 +40,33 @@ internal class AirPlayUrlSession(
 ) {
 
     // The MediaPlayer-based URL player — created on the first /play request.
+    @Volatile private var terminal: PlaybackInfo? = null
     @Volatile private var urlVideoPlayer: AirPlayVideoPlayer? = null
 
     /**
      * AirPlay video URL mode (non-mirroring): show the streaming surface and hand the URL to
      * [AirPlayVideoPlayer], which fetches + plays it via MediaPlayer onto the same Surface.
      */
-    internal fun startUrlVideo(url: String, startFraction: Double) {
+    internal fun startUrlVideo(url: String, position: MediaStartPosition) {
+        terminal = null
         onSenderNameChanged("AirPlay")
         onVideoSessionChanged(true)   // the URL player renders onto the Surface
-        onStateChanged(ProtocolState.CONNECTED)   // shows StreamingScreen → Surface becomes available
+        onStateChanged(ProtocolState.NEGOTIATING)
         val player = urlVideoPlayer ?: AirPlayVideoPlayer(
             surfaceProvider = videoSurfaceProvider,
-            onEnded = { stopUrlVideo() }
+            onReady = { onStateChanged(ProtocolState.CONNECTED) },
+            onTerminal = { phase ->
+                terminal = PlaybackInfo(0.0, 0.0, 0.0, false, phase)
+                if (phase == PlaybackPhase.FAILED) onStateChanged(ProtocolState.ERROR)
+                else onStateChanged(ProtocolState.ADVERTISING)
+            }
         ).also { urlVideoPlayer = it }
-        player.play(url, startFraction)
-        Logger.i("AirPlay URL video started: $url (start=$startFraction)")
+        player.play(url, position)
     }
 
     /** Stops AirPlay video URL playback (POST /stop or end-of-media) and ends the session. */
     internal fun stopUrlVideo() {
-        urlVideoPlayer?.release()
-        urlVideoPlayer = null
+        release()
         onStreamingStopped()
         Logger.i("AirPlay URL video stopped")
     }
@@ -77,10 +82,11 @@ internal class AirPlayUrlSession(
     }
 
     /** Returns the current playback snapshot (GET /playback-info and GET /scrub). */
-    internal fun info(): PlaybackInfo? = urlVideoPlayer?.info()
+    internal fun info(): PlaybackInfo? = urlVideoPlayer?.info() ?: terminal
 
     /** Releases the player — the MediaPlayer and its Surface reference are freed. */
     internal fun release() {
+        terminal = null
         urlVideoPlayer?.release()
         urlVideoPlayer = null
     }

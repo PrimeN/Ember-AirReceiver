@@ -3,6 +3,7 @@
 package app.ember.airreceiver.airplay.rtsp
 
 import app.ember.airreceiver.airplay.pairing.PlistCodec
+import app.ember.airreceiver.airplay.playback.MediaStartPosition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -35,7 +36,7 @@ import org.junit.Test
 class RtspVideoUrlHandlerTest {
 
     /** What the player was asked to fetch — empty means the handler refused the URL. */
-    private val playRequests = mutableListOf<Pair<String, Double>>()
+    private val playRequests = mutableListOf<Pair<String, MediaStartPosition>>()
 
     @Before
     fun setup() {
@@ -93,6 +94,20 @@ class RtspVideoUrlHandlerTest {
         assertEquals(200, response.statusCode)
         assertEquals(1, playRequests.size)
         assertEquals("http://192.168.1.5:8080/movie.mp4", playRequests[0].first)
+    }
+
+    @Test
+    fun `explicit seconds take precedence over the legacy fraction`() {
+        val body = PlistCodec.encode(mapOf(
+            "Content-Location" to "https://example.org/video",
+            "Start-Position" to 0.5,
+            "Start-Position-Seconds" to 42L
+        ))
+        val response = createHandler().handleVideoPlay(
+            RtspRequest("POST", "/play", emptyMap(), "", bodyBytes = body)
+        )
+        assertEquals(200, response.statusCode)
+        assertEquals(42_000, playRequests.single().second.milliseconds(120_000))
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────

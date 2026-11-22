@@ -9,12 +9,25 @@ import android.media.MediaPlayer
 import android.view.Surface
 import app.ember.airreceiver.util.Logger
 
+/** The two start-position forms sent by AirPlay controllers. */
+data class MediaStartPosition(val fraction: Double = 0.0, val seconds: Double? = null) {
+    internal fun milliseconds(duration: Int): Int {
+        val requested = seconds?.times(1000) ?: (fraction.coerceIn(0.0, 1.0) * duration)
+        return requested.coerceIn(0.0, if (duration > 0) duration.toDouble() else Int.MAX_VALUE.toDouble()).toInt()
+    }
+}
+
+enum class PlaybackPhase { PREPARING, BUFFERING, PLAYING, PAUSED, ENDED, FAILED }
+
 /** Snapshot of URL-video playback for `GET /playback-info`. */
 data class PlaybackInfo(
     val durationSec: Double,
     val positionSec: Double,
     val rate: Double,        // 0.0 = paused, 1.0 = playing
     val readyToPlay: Boolean,
+    val phase: PlaybackPhase = PlaybackPhase.PREPARING,
+    val bufferedUntilSec: Double? = null,
+    val seekable: Boolean = false,
 )
 
 /**
@@ -31,6 +44,8 @@ data class PlaybackInfo(
 class AirPlayVideoPlayer(
     private val surfaceProvider: () -> Surface?,
     private val onEnded: () -> Unit = {},
+    private val onReady: () -> Unit = {},
+    private val onTerminal: (PlaybackPhase) -> Unit = {},
 ) {
     private var wantsPlayback = true
     private var needsFocus = true
@@ -47,13 +62,21 @@ class AirPlayVideoPlayer(
 
     private var mp: MediaPlayer? = null
     @Volatile private var prepared = false
-    @Volatile private var startFraction = 0.0
+    private var startPosition = MediaStartPosition()
+    private var buffering = false
+    private var bufferPercent: Int? = null
+    private var seekAllowed = true
     @Volatile private var audioOnly = false
 
     /** Starts playing [url], seeking to [startPositionFraction] (0..1 of duration) once prepared. */
     @Synchronized
     fun play(url: String, startPositionFraction: Double) {
-        start(url, startPositionFraction, audioOnly = false)
+        play(url, MediaStartPosition(fraction = startPositionFraction))
+    }
+
+    @Synchronized
+    internal fun play(url: String, position: MediaStartPosition) {
+        start(url, position, audioOnly = false)
     }
 
     /**
@@ -65,16 +88,18 @@ class AirPlayVideoPlayer(
      */
     @Synchronized
     fun playAudio(url: String) {
-        start(url, startPositionFraction = 0.0, audioOnly = true)
+        start(url, MediaStartPosition(), audioOnly = true)
     }
 
     @Synchronized
-    private fun start(url: String, startPositionFraction: Double, audioOnly: Boolean) {
+    private fun start(url: String, position: MediaStartPosition, audioOnly: Boolean) {
         release()
         wantsPlayback = true
         this.audioOnly = audioOnly
-        startFraction = startPositionFraction.coerceIn(0.0, 1.0)
-        Logger.i("AirPlay video: play url=$url start=$startFraction audioOnly=$audioOnly")
+        startPosition = position
+        buffering = false
+        bufferPercent = null
+        seekAllowed = true
         val player = MediaPlayer()
         mp = player
         prepared = false
@@ -90,15 +115,33 @@ class AirPlayVideoPlayer(
             )
             if (!audioOnly) surfaceProvider()?.let { player.setSurface(it) }
             player.setOnPreparedListener { onPrepared(it) }
-            player.setOnCompletionListener { if (mp === it) { focus.release(); onEnded() } }
+            player.setOnCompletionListener { complete(it, PlaybackPhase.ENDED) }
+            player.setOnBufferingUpdateListener { source, percent ->
+                synchronized(this) {
+                    if (mp === source) bufferPercent = percent.coerceIn(0, 100)
+                }
+            }
+            player.setOnInfoListener { source, what, _ ->
+                synchronized(this) {
+                    if (mp === source) when (what) {
+                        MediaPlayer.MEDIA_INFO_BUFFERING_START -> buffering = true
+                        MediaPlayer.MEDIA_INFO_BUFFERING_END -> buffering = false
+                        MediaPlayer.MEDIA_INFO_NOT_SEEKABLE -> seekAllowed = false
+                    }
+                }
+                false
+            }
             player.setOnErrorListener { failed, what, extra ->
-                if (mp === failed) { focus.release(); onEnded() }
+                complete(failed, PlaybackPhase.FAILED)
                 Logger.e("AirPlay video error what=$what extra=$extra")
                 true   // handled — don't also fire onCompletion
             }
             player.setDataSource(url)
             player.prepareAsync()
-        }.onFailure { Logger.e("AirPlay video: setup failed", it); release() }
+        }.onFailure {
+            Logger.e("AirPlay video: setup failed", it)
+            complete(player, PlaybackPhase.FAILED)
+        }
     }
 
     @Synchronized
@@ -110,11 +153,22 @@ class AirPlayVideoPlayer(
         // The Surface usually doesn't exist at setDataSource() time (the Activity creates it only
         // after CONNECTED) — attach it now that prepare has completed.
         if (!audioOnly) surfaceProvider()?.let { runCatching { player.setSurface(it) } }
-        if (startFraction > 0.0) runCatching { player.seekTo((startFraction * player.duration).toInt()) }
+        val offset = startPosition.milliseconds(runCatching { player.duration }.getOrDefault(0))
+        if (offset > 0) runCatching { player.seekTo(offset) }
         needsFocus = audioOnly || player.hasAudioTrack()
         prepared = true
         if (wantsPlayback && focusGranted()) runCatching { player.start() }
+        onReady()
         Logger.i("AirPlay video: prepared dur=${runCatching { player.duration }.getOrDefault(0)}ms → playing")
+    }
+
+    private fun complete(player: MediaPlayer, phase: PlaybackPhase) {
+        synchronized(this) {
+            if (mp !== player) return
+            release()
+            onTerminal(phase)
+            onEnded()
+        }
     }
 
     /** rate ≤ 0 pauses, > 0 resumes. */
@@ -133,7 +187,12 @@ class AirPlayVideoPlayer(
     /** Seeks to [positionSec] seconds. */
     @Synchronized
     fun scrub(positionSec: Double) {
-        runCatching { mp?.seekTo((positionSec * 1000).toInt()) }
+        if (!prepared || !seekAllowed || !positionSec.isFinite()) return
+        val player = mp ?: return
+        runCatching {
+            val offset = MediaStartPosition(seconds = positionSec).milliseconds(player.duration)
+            player.seekTo(offset)
+        }
     }
 
     /** Current playback snapshot for `/playback-info`, or null if nothing is loaded. */
@@ -141,10 +200,21 @@ class AirPlayVideoPlayer(
     fun info(): PlaybackInfo? {
         val player = mp ?: return null
         if (!prepared) return PlaybackInfo(0.0, 0.0, 0.0, readyToPlay = false)
-        val dur = runCatching { player.duration }.getOrDefault(0)
+        val dur = runCatching { player.duration }.getOrDefault(0).coerceAtLeast(0)
         val pos = runCatching { player.currentPosition }.getOrDefault(0)
         val playing = runCatching { player.isPlaying }.getOrDefault(false)
-        return PlaybackInfo(dur / 1000.0, pos / 1000.0, if (playing) 1.0 else 0.0, readyToPlay = true)
+        val duration = dur / 1000.0
+        val phase = when {
+            buffering -> PlaybackPhase.BUFFERING
+            playing -> PlaybackPhase.PLAYING
+            else -> PlaybackPhase.PAUSED
+        }
+        return PlaybackInfo(
+            duration, pos.coerceAtLeast(0) / 1000.0, if (playing && !buffering) 1.0 else 0.0,
+            readyToPlay = true, phase = phase,
+            bufferedUntilSec = bufferPercent?.takeIf { dur > 0 }?.let { duration * it / 100 },
+            seekable = seekAllowed && dur > 0
+        )
     }
 
     /** Re-attach the streaming surface (after the Activity recreates it on foreground). */

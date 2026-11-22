@@ -3,6 +3,8 @@
 package app.ember.airreceiver.airplay.rtsp
 
 import app.ember.airreceiver.airplay.pairing.PlistCodec
+import app.ember.airreceiver.airplay.playback.MediaStartPosition
+import app.ember.airreceiver.airplay.playback.PlaybackPhase
 import app.ember.airreceiver.airplay.playback.PlaybackInfo
 import app.ember.airreceiver.util.FetchableUrlPolicy
 import app.ember.airreceiver.util.Logger
@@ -22,7 +24,7 @@ import app.ember.airreceiver.util.Logger
  *   val response = video.handleVideoPlay(request)   // 200 OK, the player starts the URL
  */
 internal class RtspVideoUrlHandler(
-    private val onVideoPlay: (url: String, startFraction: Double) -> Unit,
+    private val onVideoPlay: (url: String, startPosition: MediaStartPosition) -> Unit,
     private val onVideoRate: (rate: Float) -> Unit,
     private val onVideoScrub: (positionSec: Double) -> Unit,
     private val onVideoStop: () -> Unit,
@@ -44,34 +46,35 @@ internal class RtspVideoUrlHandler(
             Logger.w("POST /play rejected: the media URL is not fetchable")
             return RtspResponse(400, "Bad Request", protocol = request.responseProtocol())
         }
-        Logger.i("POST /play url=$url start=$start")
+        Logger.i("Accepted AirPlay URL playback request")
         onVideoPlay(url, start)
         return RtspResponse(200, "OK", protocol = request.responseProtocol())
     }
 
     /** Extracts the media URL + start fraction from a /play body (plist `Content-Location` or text). */
-    private fun parsePlayBody(request: RtspRequest): Pair<String?, Double> {
-        if (request.isPlistBody()) {
-            val p = runCatching { PlistCodec.decode(request.bodyBytes) }.getOrNull() ?: return null to 0.0
-            val url = p["Content-Location"] as? String
-            val start = (p["Start-Position"] as? Double) ?: 0.0
-            return url to start
-        }
-        // Legacy text body: "Content-Location: <url>\r\nStart-Position: <float>\r\n"
-        var url: String? = null
-        var start = 0.0
-        request.body.lineSequence().forEach { line ->
-            when {
-                line.startsWith("Content-Location:", true) -> url = line.substringAfter(":").trim()
-                line.startsWith("Start-Position:", true) -> start = line.substringAfter(":").trim().toDoubleOrNull() ?: 0.0
+    private fun parsePlayBody(request: RtspRequest): Pair<String?, MediaStartPosition> {
+        val fields: Map<String, Any?> = if (request.isPlistBody()) {
+            runCatching { PlistCodec.decode(request.bodyBytes) }.getOrDefault(emptyMap())
+        } else {
+            request.body.lineSequence().filter { ':' in it }.associate {
+                it.substringBefore(':').trim() to it.substringAfter(':').trim()
             }
         }
-        return url to start
+        fun value(name: String): Any? = fields.entries.firstOrNull { it.key.equals(name, true) }?.value
+        fun number(name: String): Double? = when (val raw = value(name)) {
+            is Number -> raw.toDouble()
+            is String -> raw.toDoubleOrNull()
+            else -> null
+        }?.takeIf { it.isFinite() && it >= 0 }
+        return (value("Content-Location") as? String) to MediaStartPosition(
+            fraction = number("Start-Position") ?: 0.0,
+            seconds = number("Start-Position-Seconds")
+        )
     }
 
     /** POST /rate?value=X — X=0 pause, X≥1 resume. */
     internal fun handleVideoRate(request: RtspRequest): RtspResponse {
-        val rate = queryParam(request.uri, "value")?.toFloatOrNull() ?: 1f
+        val rate = queryParam(request.uri, "value")?.toFloatOrNull()?.takeIf { it.isFinite() } ?: 1f
         Logger.d("POST /rate value=$rate")
         onVideoRate(rate)
         return RtspResponse(200, "OK", protocol = request.responseProtocol())
@@ -104,19 +107,23 @@ internal class RtspVideoUrlHandler(
     internal fun handlePlaybackInfo(request: RtspRequest): RtspResponse {
         val info = onPlaybackInfo()
         val plist: Map<String, Any?> = if (info == null || !info.readyToPlay) {
-            mapOf("readyToPlay" to false)
+            when (info?.phase) {
+                PlaybackPhase.FAILED -> mapOf("readyToPlay" to false, "errorCode" to -1L)
+                PlaybackPhase.ENDED -> mapOf("readyToPlay" to false, "duration" to -1.0)
+                else -> mapOf("readyToPlay" to false, "playbackBufferEmpty" to true)
+            }
         } else {
-            val ranges = listOf(mapOf("start" to 0.0, "duration" to info.durationSec))
+            val buffering = info.phase == PlaybackPhase.BUFFERING
             mapOf(
                 "duration" to info.durationSec,
                 "position" to info.positionSec,
                 "rate" to info.rate,
                 "readyToPlay" to true,
-                "playbackBufferEmpty" to false,
-                "playbackBufferFull" to true,
-                "playbackLikelyToKeepUp" to true,
-                "loadedTimeRanges" to ranges,
-                "seekableTimeRanges" to ranges,
+                "playbackBufferEmpty" to buffering,
+                "playbackBufferFull" to (info.bufferedUntilSec?.let { it >= info.durationSec } == true),
+                "playbackLikelyToKeepUp" to (!buffering && info.rate > 0),
+                "loadedTimeRanges" to listOfNotNull(info.bufferedUntilSec?.let { mapOf("start" to 0.0, "duration" to it) }),
+                "seekableTimeRanges" to if (info.seekable) listOf(mapOf("start" to 0.0, "duration" to info.durationSec)) else emptyList(),
             )
         }
         return RtspResponse(
