@@ -206,4 +206,8 @@
     <string name="diagnostics_resources_measuring">Measuring the resources…</string>
     <string name="diagnostics_resources_measured">Resources measured</string>
 
+    <string name="protocol_state_permission_required">Permission required</string>
+    <string name="protocol_detail_miracast_permission">Select Restart to grant Wi-Fi Direct access</string>
+    <string name="miracast_permission_help">Miracast needs Wi-Fi Direct access. In app settings, allow Nearby devices on Android 13 or later, or precise Location on earlier versions. Then return to Ember and select Restart.</string>
+    <string name="miracast_open_app_settings">Open app settings</string>
 </resources>

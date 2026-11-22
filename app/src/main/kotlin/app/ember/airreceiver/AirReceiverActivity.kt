@@ -3,13 +3,19 @@
 package app.ember.airreceiver
 
 import app.ember.airreceiver.util.Logger
+import android.Manifest
+import android.app.AlertDialog
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -48,6 +54,48 @@ import app.ember.airreceiver.ui.StreamingScreen
  * AirReceiverService and mirrors the service state into the overlay decision.
  */
 class AirReceiverActivity : AppCompatActivity() {
+
+    private val miracastPermissionRequest =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            if (grants[miracastPermission] == true) {
+                ServiceController.restart(this)
+            } else {
+                showMiracastPermissionHelp()
+            }
+        }
+
+    private val miracastPermission: String
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.NEARBY_WIFI_DEVICES
+        } else {
+            Manifest.permission.ACCESS_FINE_LOCATION
+        }
+
+    internal fun requestMiracastPermissionIfNeeded(): Boolean {
+        if (getSystemService(WIFI_P2P_SERVICE) == null ||
+            ContextCompat.checkSelfPermission(this, miracastPermission) == PackageManager.PERMISSION_GRANTED
+        ) return false
+
+        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(miracastPermission)
+        } else {
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+        miracastPermissionRequest.launch(permissions)
+        return true
+    }
+
+    private fun showMiracastPermissionHelp() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.protocol_state_permission_required)
+            .setMessage(R.string.miracast_permission_help)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.miracast_open_app_settings) { _, _ ->
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", packageName, null)))
+            }
+            .show()
+    }
 
     // UI references
     private lateinit var navItemHome: TextView

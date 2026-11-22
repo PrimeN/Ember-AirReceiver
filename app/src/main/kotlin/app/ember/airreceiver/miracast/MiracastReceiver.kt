@@ -200,7 +200,7 @@ class MiracastReceiver(
         }
         if (!hasWifiP2pPermission()) {
             Logger.w("Cannot register Miracast P2P service: missing Wi-Fi Direct permission")
-            onStateChanged(ProtocolState.ERROR)
+            onStateChanged(ProtocolState.PERMISSION_REQUIRED)
             return
         }
 

@@ -55,6 +55,9 @@ enum class ProtocolState {
     /** A sender is actively connected and streaming. */
     CONNECTED,
 
+    /** The user must grant a runtime permission before the receiver can start. */
+    PERMISSION_REQUIRED,
+
     /** The protocol encountered an error (e.g., port already in use). */
     ERROR
 }

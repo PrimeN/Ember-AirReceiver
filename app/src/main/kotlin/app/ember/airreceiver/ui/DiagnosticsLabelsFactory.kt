@@ -129,6 +129,7 @@ internal object DiagnosticsLabelsFactory {
         ProtocolState.DISABLED -> context.getString(R.string.protocol_state_disabled)
         ProtocolState.ADVERTISING -> context.getString(R.string.protocol_state_advertising)
         ProtocolState.CONNECTED -> context.getString(R.string.protocol_state_connected)
+        ProtocolState.PERMISSION_REQUIRED -> context.getString(R.string.protocol_state_permission_required)
         ProtocolState.ERROR -> context.getString(R.string.protocol_state_error)
     }
 

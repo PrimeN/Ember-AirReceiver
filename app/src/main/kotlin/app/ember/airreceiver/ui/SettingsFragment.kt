@@ -207,7 +207,17 @@ class SettingsFragment : Fragment() {
         // even though it's switched on" confusion from issue #18. Every setting that the
         // receivers read at start-up therefore restarts the service.
         setToggleListener(rowAirPlay)      { enabled -> saveAndRestart { it.copy(airPlayEnabled = enabled) } }
-        setToggleListener(rowMiracast)     { enabled -> saveAndRestart { it.copy(miracastEnabled = enabled) } }
+        setToggleListener(rowMiracast) { enabled ->
+            viewLifecycleOwner.lifecycleScope.launch {
+                if (!settingsRepository.update { it.copy(miracastEnabled = enabled) }) {
+                    setToggle(rowMiracast, settingsRepository.settingsFlow.first().miracastEnabled)
+                    return@launch
+                }
+                if (!enabled || (activity as? AirReceiverActivity)?.requestMiracastPermissionIfNeeded() != true) {
+                    ServiceController.restart(requireContext())
+                }
+            }
+        }
         setToggleListener(rowCast)         { enabled -> saveAndRestart { it.copy(castEnabled = enabled) } }
         setToggleListener(rowDlna)         { enabled -> saveAndRestart { it.copy(dlnaEnabled = enabled) } }
         setToggleListener(rowMirrorAudio)  { enabled -> saveAndRestart { it.copy(mirrorAudioEnabled = enabled) } }
