@@ -85,21 +85,20 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    /**
-     * Resets all settings to their default values.
-     *
-     * Used in "reset to defaults" functionality. This is a destructive operation —
-     * all user-configured settings will be lost.
-     */
-    suspend fun resetToDefaults() {
-        try {
+    /** Clears saved preferences and returns the previous settings, or null if the write fails. */
+    suspend fun resetToDefaults(): AppSettings? {
+        var previousSettings = AppSettings.DEFAULT
+        return try {
             context.dataStore.edit { prefs ->
+                previousSettings = prefs.toAppSettings()
                 prefs.clear()
             }
             Logger.i("Settings reset to defaults")
+            previousSettings
         } catch (e: Exception) {
             e.rethrowIfCancellation()
             Logger.e("Failed to reset settings", e)
+            null
         }
     }
 

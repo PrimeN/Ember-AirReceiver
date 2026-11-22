@@ -168,6 +168,10 @@ class AirReceiverActivity : AppCompatActivity() {
         )
     }
 
+    internal fun restartRunningReceivers() {
+        binder.restartRunningReceivers()
+    }
+
     /**
      * Shows the full-screen streaming overlay (called by AirReceiverService
      * via a state update or broadcast when a stream becomes active).

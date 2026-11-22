@@ -100,6 +100,7 @@
     <string name="setting_force_high_res_subtitle">Mirroring plus net ; utilise plus de CPU. Désactivé = 1080p</string>
     <string name="setting_version">Version</string>
     <string name="setting_reset_defaults">Réinitialiser les paramètres</string>
+    <string name="setting_reset_failed">Impossible de réinitialiser les paramètres. Réessayez.</string>
 
     <!-- ── Waiting screen (legacy, used by WaitingScreen view) ─── -->
     <string name="waiting_title">Prêt pour AirPlay</string>

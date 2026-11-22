@@ -7,7 +7,6 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import app.ember.airreceiver.service.ServiceController
 import android.text.InputFilter
 import android.text.InputType
 import android.view.LayoutInflater
@@ -16,11 +15,14 @@ import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.widget.SwitchCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import app.ember.airreceiver.AirReceiverActivity
 import app.ember.airreceiver.BuildConfig
 import app.ember.airreceiver.R
+import app.ember.airreceiver.service.ServiceController
 import app.ember.airreceiver.settings.AppSettings
 import app.ember.airreceiver.settings.SettingsRepository
 import app.ember.airreceiver.util.Logger
@@ -356,16 +358,20 @@ class SettingsFragment : Fragment() {
             .show()
     }
 
-    /**
-     * Resets all settings to defaults and repopulates the UI.
-     * TODO: Add a confirmation dialog before resetting.
-     */
     private fun resetSettings() {
         viewLifecycleOwner.lifecycleScope.launch {
-            settingsRepository.resetToDefaults()
+            val previousSettings = settingsRepository.resetToDefaults()
+            if (previousSettings == null) {
+                Toast.makeText(requireContext(), R.string.setting_reset_failed, Toast.LENGTH_LONG).show()
+                return@launch
+            }
+
             val defaults = AppSettings.DEFAULT
             populateUI(defaults)
-            Logger.i("Settings reset to defaults")
+            // Start on boot is only read by BootReceiver.
+            if (previousSettings.copy(startOnBoot = defaults.startOnBoot) != defaults) {
+                (activity as? AirReceiverActivity)?.restartRunningReceivers()
+            }
         }
     }
 }

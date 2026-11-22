@@ -14,6 +14,8 @@ import app.ember.airreceiver.airplay.nowplaying.NowPlayingInfo
 import app.ember.airreceiver.service.PhotoFrame
 import app.ember.airreceiver.service.AirReceiverService
 import app.ember.airreceiver.service.ProtocolState
+import app.ember.airreceiver.service.ServiceController
+import app.ember.airreceiver.service.ServiceState
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -118,6 +120,12 @@ internal class ServiceConnectionBinder(
         if (isBound) {
             context.unbindService(serviceConnection)
             isBound = false
+        }
+    }
+
+    fun restartRunningReceivers() {
+        if (service?.serviceState?.value == ServiceState.Running) {
+            ServiceController.restart(context)
         }
     }
 
