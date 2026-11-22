@@ -32,11 +32,18 @@ import kotlin.math.roundToInt
  *       body = soapEnvelope
  *   )
  */
-class DlnaSoapDispatcher(
-    private val playbackController: DlnaPlaybackController = DlnaPlaybackController.NOOP,
-    private val onLastChange: (String, String) -> Unit = { _, _ -> }
+class DlnaSoapDispatcher internal constructor(
+    private val playbackController: DlnaPlaybackController,
+    private val onLastChange: (String, String) -> Unit,
+    private val state: DlnaTransportState
 ) {
-    private val state = DlnaTransportState()
+    constructor(
+        playbackController: DlnaPlaybackController = DlnaPlaybackController.NOOP,
+        onLastChange: (String, String) -> Unit = { _, _ -> }
+    ) : this(playbackController, onLastChange, DlnaTransportState())
+
+    internal fun onPlaybackTerminal(loadId: Long, failed: Boolean): Boolean =
+        avTransport.onPlaybackTerminal(loadId, failed)
     private val avTransport = DlnaAvTransportService(state, playbackController, onLastChange)
 
     /**

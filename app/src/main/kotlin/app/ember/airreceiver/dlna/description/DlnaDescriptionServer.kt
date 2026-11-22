@@ -40,11 +40,12 @@ import kotlinx.coroutines.launch
  *   val server = DlnaDescriptionServer("Living Room TV", "uuid:…", "192.168.1.5")
  *   server.start(scope)
  */
-class DlnaDescriptionServer(
+class DlnaDescriptionServer internal constructor(
     private val friendlyName: String,
     private val udn: String,
     private val localHost: String,
-    playbackController: DlnaPlaybackController = DlnaPlaybackController.NOOP
+    playbackController: DlnaPlaybackController = DlnaPlaybackController.NOOP,
+    transportState: app.ember.airreceiver.dlna.DlnaTransportState = app.ember.airreceiver.dlna.DlnaTransportState()
 ) {
     @Volatile private var serverSocket: ServerSocket? = null
     @Volatile private var running = false
@@ -53,6 +54,7 @@ class DlnaDescriptionServer(
     private val dialCatalog = DialAppCatalog()
     private val soapDispatcher = DlnaSoapDispatcher(
         playbackController = playbackController,
+        state = transportState,
         onLastChange = { eventPath, lastChange -> genaEvents.publish(eventPath, lastChange) }
     )
     private val workers = ThreadPoolExecutor(
@@ -64,6 +66,9 @@ class DlnaDescriptionServer(
     ) { runnable ->
         Thread(runnable, "dlna-http").apply { isDaemon = true }
     }
+
+    internal fun onPlaybackTerminal(loadId: Long, failed: Boolean): Boolean =
+        soapDispatcher.onPlaybackTerminal(loadId, failed)
 
     /** The TCP port the server listens on. */
     val port: Int

@@ -25,7 +25,7 @@ internal class DlnaAvTransportService(
 ) {
 
     /** Handles a single AVTransport action. */
-    fun handle(action: String, values: Map<String, String>): SoapResult =
+    fun handle(action: String, values: Map<String, String>): SoapResult = synchronized(state) {
         when (action) {
             "SetAVTransportURI" -> setAvTransportUri(values)
             "Play" -> play()
@@ -41,6 +41,7 @@ internal class DlnaAvTransportService(
                 "Invalid action: $action"
             )
         }
+    }
 
     private fun setAvTransportUri(values: Map<String, String>): SoapResult {
         // The URI must be accepted in every shape a real control point sends it.
@@ -53,6 +54,8 @@ internal class DlnaAvTransportService(
                 return SoapResponses.fault(SoapResponses.ERROR_INVALID_ARGS, "Invalid CurrentURI")
             }
         }
+        state.loadId++
+        state.loadFailed = false
         state.currentUri = uri
         state.currentUriMetadata = values["CurrentURIMetaData"].orEmpty().take(MAX_METADATA_CHARS)
         state.metadata = DlnaMediaMetadataParser.parse(state.currentUriMetadata)
@@ -70,19 +73,26 @@ internal class DlnaAvTransportService(
                 "No media loaded"
             )
         }
+        val previous = state.transportState
+        if (previous == DlnaTransportState.TRANSPORT_PLAYING) {
+            return SoapResponses.ok(action = "Play", service = SERVICE, values = emptyMap())
+        }
         state.transportState = DlnaTransportState.TRANSPORT_PLAYING
+        state.loadFailed = false
+        val position = state.trackedPositionMillis()
         state.onPlayStarted()
-        controller.onPlay(state.currentUri, state.metadata)
+        if (previous == DlnaTransportState.TRANSPORT_PAUSED) {
+            controller.onResume()
+        } else {
+            controller.onPlayLoad(state.currentUri, state.metadata, ++state.loadId, position)
+        }
         publishTransportState()
         return SoapResponses.ok(action = "Play", service = SERVICE, values = emptyMap())
     }
 
     private fun pause(): SoapResult {
-        if (state.currentUri.isBlank()) {
-            return SoapResponses.fault(
-                SoapResponses.ERROR_TRANSITION_NOT_AVAILABLE,
-                "No media loaded"
-            )
+        if (state.transportState != DlnaTransportState.TRANSPORT_PLAYING) {
+            return SoapResponses.fault(SoapResponses.ERROR_TRANSITION_NOT_AVAILABLE, "Media is not playing")
         }
         state.transportState = DlnaTransportState.TRANSPORT_PAUSED
         state.onPaused()
@@ -92,6 +102,8 @@ internal class DlnaAvTransportService(
     }
 
     private fun stop(): SoapResult {
+        state.loadId++
+        state.loadFailed = false
         state.transportState = DlnaTransportState.TRANSPORT_STOPPED
         state.onStopped()
         controller.onStop()
@@ -118,7 +130,7 @@ internal class DlnaAvTransportService(
             service = SERVICE,
             values = mapOf(
                 "CurrentTransportState" to state.transportState,
-                "CurrentTransportStatus" to "OK",
+                "CurrentTransportStatus" to if (state.loadFailed) "ERROR_OCCURRED" else "OK",
                 "CurrentSpeed" to state.playbackSpeed
             )
         )
@@ -173,7 +185,7 @@ internal class DlnaAvTransportService(
      * network control point uses, otherwise a control point would keep showing
      * "PLAYING" while the TV is paused.
      */
-    fun remotePlayPause() {
+    fun remotePlayPause() = synchronized(state) {
         if (state.transportState == DlnaTransportState.TRANSPORT_PLAYING) {
             pause()
         } else {
@@ -182,13 +194,23 @@ internal class DlnaAvTransportService(
     }
 
     /** Applies a "pause" command that came from the TV remote. */
-    fun remotePause() {
+    fun remotePause() = synchronized(state) {
         pause()
     }
 
     /** Applies a "stop" command that came from the TV remote. */
-    fun remoteStop() {
+    fun remoteStop() = synchronized(state) {
         stop()
+    }
+
+    fun onPlaybackTerminal(loadId: Long, failed: Boolean): Boolean = synchronized(state) {
+        if (loadId != state.loadId) return@synchronized false
+        state.loadId++
+        state.transportState = DlnaTransportState.TRANSPORT_STOPPED
+        state.loadFailed = failed
+        state.onStopped()
+        publishTransportState()
+        true
     }
 
     /**

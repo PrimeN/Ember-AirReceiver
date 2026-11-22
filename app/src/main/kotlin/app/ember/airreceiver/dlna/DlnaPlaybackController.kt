@@ -41,6 +41,14 @@ interface DlnaPlaybackController {
     /** Called when playback should start for [uri]. */
     fun onPlay(uri: String, metadata: DlnaMediaMetadata? = null)
 
+    /** Identifies a load so delayed completion callbacks cannot end a replacement. */
+    fun onPlayLoad(uri: String, metadata: DlnaMediaMetadata?, loadId: Long, positionMillis: Long) {
+        onPlay(uri, metadata)
+        if (positionMillis > 0L) onSeek(positionMillis)
+    }
+
+    fun onResume() = Unit
+
     /** Called when playback should pause. */
     fun onPause()
 

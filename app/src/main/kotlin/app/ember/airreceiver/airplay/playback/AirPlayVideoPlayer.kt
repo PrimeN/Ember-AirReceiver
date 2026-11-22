@@ -46,6 +46,7 @@ class AirPlayVideoPlayer(
     private val onEnded: () -> Unit = {},
     private val onReady: () -> Unit = {},
     private val onTerminal: (PlaybackPhase) -> Unit = {},
+    private val onLoadTerminal: (Long, PlaybackPhase) -> Unit = { _, _ -> },
 ) {
     private var wantsPlayback = true
     private var needsFocus = true
@@ -61,6 +62,7 @@ class AirPlayVideoPlayer(
     private fun focusGranted(explicitResume: Boolean = false): Boolean = !needsFocus || focus.acquire(explicitResume)
 
     private var mp: MediaPlayer? = null
+    private var loadId = 0L
     @Volatile private var prepared = false
     private var startPosition = MediaStartPosition()
     private var buffering = false
@@ -92,9 +94,15 @@ class AirPlayVideoPlayer(
     }
 
     @Synchronized
-    private fun start(url: String, position: MediaStartPosition, audioOnly: Boolean) {
+    internal fun playLoad(url: String, positionMillis: Long, audioOnly: Boolean, id: Long) {
+        start(url, MediaStartPosition(seconds = positionMillis / 1000.0), audioOnly, id)
+    }
+
+    @Synchronized
+    private fun start(url: String, position: MediaStartPosition, audioOnly: Boolean, id: Long = 0L) {
         release()
         wantsPlayback = true
+        loadId = id
         this.audioOnly = audioOnly
         startPosition = position
         buffering = false
@@ -166,6 +174,7 @@ class AirPlayVideoPlayer(
         synchronized(this) {
             if (mp !== player) return
             release()
+            onLoadTerminal(loadId, phase)
             onTerminal(phase)
             onEnded()
         }

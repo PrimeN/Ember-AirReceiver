@@ -62,11 +62,20 @@ class DlnaReceiver(
     /** The address the running description server advertises. */
     @Volatile private var advertisedHost: String = ""
 
+    private val transportState = DlnaTransportState()
+    @Volatile private var currentLoad = 0L
+    private var imageJob: kotlinx.coroutines.Job? = null
     private val mediaPlayer = AirPlayVideoPlayer(
         surfaceProvider = surfaceProvider,
-        onEnded = {
-            Logger.i("DLNA media playback ended")
-            onStateChanged(ProtocolState.ADVERTISING)
+        onLoadTerminal = { id, phase ->
+            scope.launch {
+                val failed = phase == app.ember.airreceiver.airplay.playback.PlaybackPhase.FAILED
+                synchronized(transportState) {
+                    if (descriptionServer?.onPlaybackTerminal(id, failed) == true) {
+                        onStateChanged(if (failed) ProtocolState.ERROR else ProtocolState.ADVERTISING)
+                    }
+                }
+            }
         }
     )
     @Volatile private var currentUri: String = ""
@@ -77,7 +86,7 @@ class DlnaReceiver(
             val localHost = DlnaNetworkAddress.localIpv4Address()
             friendlyName = displayName.ifBlank { NetworkUtils.getDeviceName(context) }
             rendererUdn = "uuid:${NetworkUtils.getPersistentUuid(context)}"
-            val server = DlnaDescriptionServer(friendlyName, rendererUdn, localHost, this).also {
+            val server = DlnaDescriptionServer(friendlyName, rendererUdn, localHost, this, transportState).also {
                 it.start(scope)
             }
             val advertiser = SsdpAdvertiser(
@@ -145,7 +154,7 @@ class DlnaReceiver(
      */
     private fun rebuildDescription(host: String, advertiser: SsdpAdvertiser) {
         val oldServer = descriptionServer
-        val server = DlnaDescriptionServer(friendlyName, rendererUdn, host, this).also {
+        val server = DlnaDescriptionServer(friendlyName, rendererUdn, host, this, transportState).also {
             it.start(scope)
         }
         descriptionServer = server
@@ -173,11 +182,17 @@ class DlnaReceiver(
     }
 
     override fun onSetTransportUri(uri: String) {
+        onStop()
         currentUri = uri
-        Logger.i("DLNA AVTransport URI set: $uri")
     }
 
-    override fun onPlay(uri: String, metadata: DlnaMediaMetadata?) {
+    override fun onPlay(uri: String, metadata: DlnaMediaMetadata?) =
+        onPlayLoad(uri, metadata, transportState.loadId, 0L)
+
+    override fun onPlayLoad(uri: String, metadata: DlnaMediaMetadata?, loadId: Long, positionMillis: Long) {
+        currentLoad = loadId
+        imageJob?.cancel()
+        imageJob = null
         val target = uri.ifBlank { currentUri }
         if (target.isBlank()) {
             Logger.w("DLNA Play ignored: no CurrentURI")
@@ -187,18 +202,25 @@ class DlnaReceiver(
         val kind = metadata?.kind?.takeIf { it != DlnaMediaKind.UNKNOWN }
             ?: DlnaMediaType.kindFromUrl(target)
         when (kind) {
-            DlnaMediaKind.IMAGE -> playImage(target, metadata?.mimeType)
+            DlnaMediaKind.IMAGE -> {
+                mediaPlayer.release()
+                playImage(target, loadId)
+            }
             DlnaMediaKind.AUDIO -> {
                 onPhotoCleared()
-                mediaPlayer.playAudio(target)
+                mediaPlayer.playLoad(target, positionMillis, audioOnly = true, id = loadId)
                 onStateChanged(ProtocolState.CONNECTED)
             }
             else -> {
                 onPhotoCleared()
-                mediaPlayer.play(target, startPositionFraction = 0.0)
+                mediaPlayer.playLoad(target, positionMillis, audioOnly = false, id = loadId)
                 onStateChanged(ProtocolState.CONNECTED)
             }
         }
+    }
+
+    override fun onResume() {
+        mediaPlayer.setRate(1f)
     }
 
     override fun onPause() {
@@ -206,6 +228,9 @@ class DlnaReceiver(
     }
 
     override fun onStop() {
+        currentLoad = 0L
+        imageJob?.cancel()
+        imageJob = null
         mediaPlayer.release()
         onPhotoCleared()
         onStateChanged(ProtocolState.ADVERTISING)
@@ -246,25 +271,32 @@ class DlnaReceiver(
      * would fill the memory of the TV, and a 20 MB JPEG decodes into far more pixels
      * than the screen can show.
      */
-    private fun playImage(uri: String, announcedMimeType: String?) {
-        scope.launch(Dispatchers.IO) {
+    private fun playImage(uri: String, loadId: Long) {
+        imageJob = scope.launch(Dispatchers.IO) {
             try {
                 val bytes = fetchBounded(uri)
                 val bitmap = DlnaImageDecoder.decode(bytes, MAX_PHOTO_DIMENSION)
                 if (bitmap == null) {
                     Logger.w("DLNA photo payload could not be decoded")
-                    onStateChanged(ProtocolState.ERROR)
+                    failImage(loadId)
                     return@launch
                 }
                 val encoded = encodeJpeg(bitmap)
-                onPhotoReceived(encoded, "image/jpeg")
-                onStateChanged(ProtocolState.CONNECTED)
+                synchronized(transportState) {
+                    if (currentLoad != loadId || transportState.loadId != loadId) return@launch
+                    onPhotoReceived(encoded, "image/jpeg")
+                    onStateChanged(ProtocolState.CONNECTED)
+                }
             } catch (e: Exception) {
                 e.rethrowIfCancellation()
                 Logger.e("DLNA photo fetch failed", e)
-                onStateChanged(ProtocolState.ERROR)
+                failImage(loadId)
             }
         }
+    }
+
+    private fun failImage(loadId: Long) = synchronized(transportState) {
+        if (descriptionServer?.onPlaybackTerminal(loadId, true) == true) onStateChanged(ProtocolState.ERROR)
     }
 
     /**

@@ -25,6 +25,9 @@ internal class DlnaTransportState {
     /** The parsed form of [currentUriMetadata]. */
     @Volatile var metadata: DlnaMediaMetadata? = null
 
+    var loadId = 0L
+    var loadFailed = false
+
     /** One of the `TransportState` values of the UPnP AVTransport specification. */
     @Volatile var transportState: String = TRANSPORT_STOPPED
 
