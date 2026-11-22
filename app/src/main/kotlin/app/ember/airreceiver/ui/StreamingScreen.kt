@@ -38,11 +38,20 @@ class StreamingScreen @JvmOverloads constructor(
         setPadding(24, 16, 24, 16)
         visibility = GONE
     }
+    private val decoderStatus = TextView(context).apply {
+        setText(app.ember.airreceiver.R.string.mirror_decoder_unavailable)
+        setTextColor(Color.WHITE)
+        setBackgroundColor(Color.parseColor("#CC000000"))
+        textSize = 20f
+        setPadding(24, 16, 24, 16)
+        visibility = GONE
+    }
     private var lastDimensions: List<Int> = emptyList()
     private val handler = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
         override fun run() {
             applyAspectFit()
+            decoderStatus.visibility = if (StreamStats.videoDecoderUnavailable) VISIBLE else GONE
             if (StreamStats.overlayEnabled) {
                 debugView.visibility = VISIBLE
                 debugView.text = StreamStats.summary()
@@ -58,6 +67,9 @@ class StreamingScreen @JvmOverloads constructor(
         addView(textureView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(debugView, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.TOP or Gravity.START; topMargin = 48; leftMargin = 48
+        })
+        addView(decoderStatus, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.CENTER
         })
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {

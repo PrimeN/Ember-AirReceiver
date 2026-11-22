@@ -45,6 +45,7 @@ object StreamStats {
     val videoInvalid = AtomicLong()
     val videoConfigs = AtomicLong()
     val videoErrors = AtomicLong()
+    @Volatile var videoDecoderUnavailable = false
     @Volatile var videoStage = "waiting"
     @Volatile var videoCodec = "—"
     @Volatile var videoConfig = "—"
@@ -98,6 +99,7 @@ object StreamStats {
         listOf(videoReceived, videoSubmitted, videoOutput, videoPresented, videoTextureUpdates, videoInputMiss,
             videoInputRetries, videoRebuilds, videoKeyframeRetries,
             videoSkipped, videoInvalid, videoConfigs, videoErrors).forEach { it.set(0) }
+        videoDecoderUnavailable = false
         videoStage = "waiting"; videoCodec = "—"; videoConfig = "—"
         videoSurface = "—"; videoLastError = "—"
         resetRateSample = true

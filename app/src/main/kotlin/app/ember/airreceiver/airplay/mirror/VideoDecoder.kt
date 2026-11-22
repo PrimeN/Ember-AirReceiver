@@ -3,7 +3,9 @@
 package app.ember.airreceiver.airplay.mirror
 
 import android.media.MediaCodec
+import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
@@ -38,6 +40,7 @@ class VideoDecoder(private val outputSurface: Surface) {
     // The underlying hardware decoder — null until initialize() is called
     @Volatile private var mediaCodec: MediaCodec? = null
     internal var useMonotonicPresentationTime = false
+    internal var codecToAvoid: String? = null
     private var renderCallbackThread: HandlerThread? = null
 
     // Track whether the decoder has been initialized (to prevent double-init)
@@ -124,7 +127,18 @@ class VideoDecoder(private val outputSurface: Surface) {
         // Create the hardware H.264 decoder.
         // "video/avc" is the MIME type for H.264. Android will pick the best
         // available hardware decoder for this format.
-        mediaCodec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        StreamStats.videoCodec = ""
+        mediaCodec = codecToAvoid?.let { failedName ->
+            val alternate = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { info ->
+                !info.isEncoder && info.name != failedName &&
+                    (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !info.isAlias) &&
+                    runCatching {
+                        info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).isFormatSupported(format)
+                    }.getOrDefault(false)
+            } ?: error("No alternate AVC decoder supports the stream")
+            StreamStats.videoCodec = alternate.name
+            MediaCodec.createByCodecName(alternate.name)
+        } ?: MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         StreamStats.videoCodec = mediaCodec!!.name
 
         // Configure the decoder:

@@ -218,4 +218,5 @@
     <string name="help_miracast">On Windows, press Windows + K. On an Android device that supports Miracast, open its wireless display picker. Look for Ember AirReceiver. If it is missing, enable Miracast in Ember and check that both devices support Wi-Fi Direct.\n\nReceiver status: %2$s</string>
     <string name="help_cast">Connect the sender and TV to the same local network. Open a Cast-enabled sender that supports the configured receiver, then open its Cast picker. Look for this TV.\n\nReceiver status: %2$s</string>
     <string name="help_dlna">Connect the sender and TV to the same local network. Open a DLNA controller, choose a media renderer, and look for %1$s. If it is missing, check that DLNA is enabled and try refreshing the device list.\n\nReceiver status: %2$s</string>
+    <string name="mirror_decoder_unavailable">This TV could not decode the mirror stream. Disconnect and try again. If it persists, turn off Higher resolution in Settings.</string>
 </resources>

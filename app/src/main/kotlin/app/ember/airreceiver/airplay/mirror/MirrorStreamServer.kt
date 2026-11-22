@@ -52,6 +52,9 @@ class MirrorStreamServer(
     @Volatile private var decoder: VideoDecoder? = null   // owned by the decoder thread
     private var lastSps: ByteArray? = null
     private var lastPps: ByteArray? = null
+    private var decoderSetupFailures = 0
+    private var failedCodecName: String? = null
+    private var activeCodecToAvoid: String? = null
     // The Surface the current decoder was built against. The SurfaceView destroys its Surface when
     // the app backgrounds and creates a NEW one on return, so we watch for the identity changing
     // and rebuild the decoder — otherwise video stays black after foregrounding.
@@ -213,9 +216,19 @@ class MirrorStreamServer(
         val surface = awaitSurface()
         if (d != null && d.isHealthy && sps.contentEquals(lastSps) && pps.contentEquals(lastPps) &&
             surface === configuredSurface) return
+        if (!sps.contentEquals(lastSps) || !pps.contentEquals(lastPps)) {
+            resetDecoderRecovery()
+        }
         lastSps = sps
         lastPps = pps
         rebuildDecoder(surface)
+    }
+
+    private fun resetDecoderRecovery() {
+        decoderSetupFailures = 0
+        failedCodecName = null
+        activeCodecToAvoid = null
+        StreamStats.videoDecoderUnavailable = false
     }
 
     /**
@@ -227,7 +240,9 @@ class MirrorStreamServer(
     private fun rebuildDecoder(surface: Surface?) {
         decoder?.release()
         decoder = null
+        if (surface !== configuredSurface) resetDecoderRecovery()
         configuredSurface = surface
+        if (StreamStats.videoDecoderUnavailable) return
         val sps = lastSps ?: return
         val pps = lastPps ?: return
         if (surface == null) {
@@ -236,15 +251,28 @@ class MirrorStreamServer(
         }
         val sc = MirrorCrypto.START_CODE
         StreamStats.videoRebuilds.incrementAndGet()
-        val replacement = VideoDecoder(surface).apply { useMonotonicPresentationTime = true }
+        val alternate = if (decoderSetupFailures >= 2) failedCodecName else activeCodecToAvoid
+        val replacement = VideoDecoder(surface).apply {
+            useMonotonicPresentationTime = true
+            codecToAvoid = alternate
+        }
         try {
             replacement.initialize(sc + sps, sc + pps, width, height)
         } catch (e: Exception) {
-            StreamStats.videoError("decoder setup failed; waiting for IDR", e)
-            Logger.w("Mirror: decoder setup failed; will retry on a keyframe")
+            decoderSetupFailures++
+            if (alternate == null) {
+                failedCodecName = StreamStats.videoCodec.takeIf { it.isNotBlank() }
+            }
+            val unavailable = decoderSetupFailures >= 3 ||
+                (decoderSetupFailures >= 2 && failedCodecName == null)
+            StreamStats.videoDecoderUnavailable = unavailable
+            StreamStats.videoError(if (unavailable) "decoder unavailable" else "decoder setup failed; waiting for IDR", e)
+            Logger.w("Mirror: decoder setup failed (attempt $decoderSetupFailures, alternate=${alternate != null})")
             return
         }
         decoder = replacement
+        activeCodecToAvoid = alternate
+        decoderSetupFailures = 0
         awaitingKeyframe = true                                // a fresh decoder must start at an IDR
         StreamStats.videoRes = "${width}x${height}"
         Logger.i("Mirror decoder (re)built for surface (sps=${sps.size}B pps=${pps.size}B)")
@@ -259,7 +287,8 @@ class MirrorStreamServer(
         if (liveSurface !== configuredSurface) {
             Logger.i("Mirror: surface ${if (liveSurface == null) "lost" else "changed"} — re-attaching decoder")
             rebuildDecoder(liveSurface)
-        } else if (decoder == null && liveSurface != null && lastSps != null && isKeyframe(annexB)) {
+        } else if (decoder == null && !StreamStats.videoDecoderUnavailable &&
+            liveSurface != null && lastSps != null && isKeyframe(annexB)) {
             // A failed setup may be transient. Retry at a clean decode point on the same surface.
             rebuildDecoder(liveSurface)
         }

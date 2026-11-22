@@ -13,6 +13,7 @@ class VideoDecoder(outputSurface: Any?) {
     // Matches the real VideoDecoder API used by MirrorStreamServer (self-heal flag).
     var isHealthy = true
     internal var useMonotonicPresentationTime = false
+    internal var codecToAvoid: String? = null
 
     fun initialize(sps: ByteArray, pps: ByteArray, width: Int, height: Int) {}
     fun decodeNalUnit(nalUnit: ByteArray, presentationTimeUs: Long = 0L): Boolean = true
