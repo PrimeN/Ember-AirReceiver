@@ -54,7 +54,7 @@ internal object DlnaServiceCatalog {
     private val AV_TRANSPORT = listOf(
         action("SetAVTransportURI", inArg("CurrentURI"), inArg("CurrentURIMetaData")),
         action("SetNextAVTransportURI", inArg("NextURI"), inArg("NextURIMetaData")),
-        action("GetMediaInfo", outArg("NrTracks"), outArg("MediaDuration"), outArg("CurrentURI"), outArg("CurrentURIMetaData"), outArg("PlayMedium"), outArg("RecordMedium"), outArg("WriteStatus")),
+        action("GetMediaInfo", outArg("NrTracks"), outArg("MediaDuration"), outArg("CurrentURI"), outArg("CurrentURIMetaData"), outArg("NextURI"), outArg("NextURIMetaData"), outArg("PlayMedium"), outArg("RecordMedium"), outArg("WriteStatus")),
         action("GetTransportInfo", outArg("CurrentTransportState"), outArg("CurrentTransportStatus"), outArg("CurrentSpeed")),
         action("GetPositionInfo", outArg("Track"), outArg("TrackDuration"), outArg("TrackMetaData"), outArg("TrackURI"), outArg("RelTime"), outArg("AbsTime"), outArg("RelCount"), outArg("AbsCount")),
         action("GetDeviceCapabilities", outArg("PlayMedia"), outArg("RecMedia"), outArg("RecQualityModes")),

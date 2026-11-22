@@ -25,6 +25,8 @@ internal class DlnaTransportState {
     /** The parsed form of [currentUriMetadata]. */
     @Volatile var metadata: DlnaMediaMetadata? = null
 
+    var nextUri = ""
+    var nextUriMetadata = ""
     var loadId = 0L
     var loadFailed = false
 

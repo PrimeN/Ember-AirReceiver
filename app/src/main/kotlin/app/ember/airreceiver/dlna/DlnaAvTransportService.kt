@@ -28,6 +28,11 @@ internal class DlnaAvTransportService(
     fun handle(action: String, values: Map<String, String>): SoapResult = synchronized(state) {
         when (action) {
             "SetAVTransportURI" -> setAvTransportUri(values)
+            "SetNextAVTransportURI" -> setNextAvTransportUri(values)
+            "GetDeviceCapabilities" -> SoapResponses.ok(
+                action = action, service = SERVICE,
+                values = mapOf("PlayMedia" to "NETWORK", "RecMedia" to "NOT_IMPLEMENTED", "RecQualityModes" to "NOT_IMPLEMENTED")
+            )
             "Play" -> play()
             "Pause" -> pause()
             "Stop" -> stop()
@@ -54,16 +59,40 @@ internal class DlnaAvTransportService(
                 return SoapResponses.fault(SoapResponses.ERROR_INVALID_ARGS, "Invalid CurrentURI")
             }
         }
+        clearNext()
+        storeCurrent(uri, values["CurrentURIMetaData"].orEmpty())
+        publishTransportState()
+        return SoapResponses.ok(action = "SetAVTransportURI", service = SERVICE, values = emptyMap())
+    }
+
+    private fun storeCurrent(uri: String, metadata: String) {
         state.loadId++
         state.loadFailed = false
         state.currentUri = uri
-        state.currentUriMetadata = values["CurrentURIMetaData"].orEmpty().take(MAX_METADATA_CHARS)
+        state.currentUriMetadata = metadata.take(MAX_METADATA_CHARS)
         state.metadata = DlnaMediaMetadataParser.parse(state.currentUriMetadata)
         state.transportState = DlnaTransportState.TRANSPORT_STOPPED
         state.onStopped()
         controller.onSetTransportUri(uri)
+    }
+
+    private fun setNextAvTransportUri(values: Map<String, String>): SoapResult {
+        val next = values["NextURI"] ?: return SoapResponses.fault(SoapResponses.ERROR_INVALID_ARGS, "Missing NextURI")
+        if (next.isBlank()) {
+            clearNext()
+        } else {
+            val validated = DlnaMediaUri.validate(next) as? DlnaMediaUri.Result.Accepted
+                ?: return SoapResponses.fault(SoapResponses.ERROR_INVALID_ARGS, "Invalid NextURI")
+            state.nextUri = validated.uri
+            state.nextUriMetadata = values["NextURIMetaData"].orEmpty().take(MAX_METADATA_CHARS)
+        }
         publishTransportState()
-        return SoapResponses.ok(action = "SetAVTransportURI", service = SERVICE, values = emptyMap())
+        return SoapResponses.ok(action = "SetNextAVTransportURI", service = SERVICE, values = emptyMap())
+    }
+
+    private fun clearNext() {
+        state.nextUri = ""
+        state.nextUriMetadata = ""
     }
 
     private fun play(): SoapResult {
@@ -102,6 +131,7 @@ internal class DlnaAvTransportService(
     }
 
     private fun stop(): SoapResult {
+        clearNext()
         state.loadId++
         state.loadFailed = false
         state.transportState = DlnaTransportState.TRANSPORT_STOPPED
@@ -164,6 +194,8 @@ internal class DlnaAvTransportService(
                 "MediaDuration" to DlnaTimeFormat.duration(duration),
                 "CurrentURI" to state.currentUri,
                 "CurrentURIMetaData" to state.currentUriMetadata,
+                "NextURI" to state.nextUri,
+                "NextURIMetaData" to state.nextUriMetadata,
                 "PlayMedium" to "NETWORK",
                 "RecordMedium" to "NOT_IMPLEMENTED",
                 "WriteStatus" to "NOT_IMPLEMENTED"
@@ -205,6 +237,15 @@ internal class DlnaAvTransportService(
 
     fun onPlaybackTerminal(loadId: Long, failed: Boolean): Boolean = synchronized(state) {
         if (loadId != state.loadId) return@synchronized false
+        if (!failed && state.nextUri.isNotEmpty()) {
+            val uri = state.nextUri
+            val metadata = state.nextUriMetadata
+            clearNext()
+            storeCurrent(uri, metadata)
+            play()
+            return@synchronized false
+        }
+        clearNext()
         state.loadId++
         state.transportState = DlnaTransportState.TRANSPORT_STOPPED
         state.loadFailed = failed
@@ -254,6 +295,8 @@ internal class DlnaAvTransportService(
             GenaLastChange.avTransport(
                 "TransportState" to state.transportState,
                 "CurrentTransportActions" to currentTransportActions(),
+                "AVTransportURI" to state.currentUri,
+                "NextAVTransportURI" to state.nextUri,
                 "CurrentSpeed" to state.playbackSpeed
             )
         )
