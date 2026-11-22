@@ -3,6 +3,7 @@ package app.ember.airreceiver.airplay.rtsp
 import app.ember.airreceiver.airplay.pairing.PlistCodec
 import app.ember.airreceiver.airplay.playback.HlsPlaylistProxy
 import app.ember.airreceiver.airplay.playback.MediaStartPosition
+import java.io.OutputStream
 import java.net.InetAddress
 import java.net.Socket
 import java.net.URI
@@ -54,11 +55,10 @@ internal class SenderHlsTransport(
     }
 
     fun play(request: RtspRequest, peer: InetAddress?, url: String, offset: MediaStartPosition): Int? {
-        val canRelay = peer != null && matches(request, peer) &&
-            runCatching { URI(url).path.endsWith(".m3u8", true) }.getOrDefault(false)
+        val playlist = runCatching { URI(url).path.endsWith(".m3u8", true) }.getOrDefault(false)
         val playerUrl = synchronized(this) {
-            if (canRelay) {
-                val attached = channel ?: return null
+            val attached = channel
+            if (playlist && attached != null && attached.peer == peer && attached.session == sessionId(request)) {
                 stopPlayback()
                 val load = generation
                 val relay = runCatching { HlsPlaylistProxy(url) { fetch(attached, load, it) } }.getOrNull()
@@ -85,6 +85,7 @@ internal class SenderHlsTransport(
         val status = (params?.get("FCUP_Response_StatusCode") as? Number)?.toInt() ?: 200
         val data = params?.get("FCUP_Response_Data") as? ByteArray
         synchronized(this) {
+            if (!matches(request, peer)) return RtspResponse(400, "Bad Request", protocol = "HTTP/1.1")
             val reply = pending[id]
             if (plist?.get("type") != "unhandledURLResponse" ||
                 reply == null || reply.channel !== channel || reply.url != url) {
@@ -130,6 +131,19 @@ internal class SenderHlsTransport(
         } finally {
             synchronized(this) { pending.remove(id) }
         }
+    }
+
+    /** Serialize responses and playlist events that share the upgraded socket. */
+    fun replyOnReverse(socket: Socket, write: (OutputStream) -> Unit) {
+        val attached = synchronized(this) { channel?.takeIf { it.socket === socket } } ?: return
+        synchronized(attached) { write(socket.getOutputStream()) }
+    }
+
+    @Synchronized
+    fun expireUnclaimed(socket: Socket) {
+        if (channel?.socket !== socket || proxy != null) return
+        channel = null
+        runCatching { socket.close() }
     }
 
     @Synchronized

@@ -10,6 +10,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URI
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
@@ -21,6 +22,7 @@ internal class HlsPlaylistProxy(
     private val fetchPlaylist: (String) -> ByteArray?
 ) : Closeable {
     private data class Resource(val uri: String, val playlist: Boolean)
+    private data class PlaylistResponse(val status: Int, val bytes: ByteArray? = null)
 
     private val listener = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
     private val pool = ThreadPoolExecutor(0, 4, 5, TimeUnit.SECONDS, SynchronousQueue<Runnable>()) { task ->
@@ -28,12 +30,14 @@ internal class HlsPlaylistProxy(
     }
     private val sockets = ConcurrentHashMap.newKeySet<Socket>()
     private val downloads = ConcurrentHashMap.newKeySet<HttpURLConnection>()
+    private val playlistLoads = ConcurrentHashMap<String, CompletableFuture<PlaylistResponse>>()
     private val token = UUID.randomUUID().toString()
     private val baseUrl = "http://127.0.0.1:${listener.localPort}/$token/"
     private val entries = LinkedHashMap<String, Resource>(256, 0.75f, true)
     private val pathByResource = HashMap<Resource, String>()
     private var nextPath = 0L
     val url = expose(root, true)
+    private val rootPath = url.substringAfterLast('/')
     private val reader = RtspRequestReader(8192, 0)
 
     init {
@@ -50,7 +54,9 @@ internal class HlsPlaylistProxy(
         }
         if (entries.size >= 2048) {
             val oldest = entries.entries.iterator()
-            pathByResource.remove(oldest.next().value)
+            var entry = oldest.next()
+            if (entry.key == rootPath) entry = oldest.next()
+            pathByResource.remove(entry.value)
             oldest.remove()
         }
         val path = (++nextPath).toString() + if (playlist) ".m3u8" else ".media"
@@ -94,15 +100,40 @@ internal class HlsPlaylistProxy(
         val path = request.uri.substringBefore('?').removePrefix(prefix)
         val resource = synchronized(this) { entries[path] } ?: return respond(socket, 404)
         if (resource.playlist) {
-            val bytes = fetchPlaylist(resource.uri) ?: return respond(socket, 502)
-            val rewritten = runCatching {
-                rewrite(bytes, resource.uri, ::expose)
-            }.getOrNull() ?: return respond(socket, 422)
-            writeHeaders(socket, 200, "application/vnd.apple.mpegurl", rewritten.size.toLong())
-            socket.getOutputStream().write(rewritten)
+            val uri = playlistReloadUri(resource.uri, request.uri.substringAfter('?', ""))
+            val response = loadPlaylist(resource, uri)
+            val bytes = response.bytes ?: return respond(socket, response.status)
+            writeHeaders(socket, 200, "application/vnd.apple.mpegurl", bytes.size.toLong())
+            socket.getOutputStream().write(bytes)
         } else {
             serveMedia(socket, request, resource.uri)
         }
+    }
+
+    private fun loadPlaylist(resource: Resource, requestedUri: String): PlaylistResponse {
+        val future = CompletableFuture<PlaylistResponse>()
+        val inFlight = playlistLoads.putIfAbsent(requestedUri, future)
+        if (inFlight != null) return runCatching { inFlight.get(6, TimeUnit.SECONDS) }
+            .getOrElse { PlaylistResponse(502) }
+
+        try {
+            val result = fetchAndRewrite(resource, requestedUri)
+            future.complete(result)
+            return result
+        } finally {
+            future.complete(PlaylistResponse(502))
+            playlistLoads.remove(requestedUri, future)
+        }
+    }
+
+    private fun fetchAndRewrite(resource: Resource, requestedUri: String): PlaylistResponse {
+        if (listener.isClosed) return PlaylistResponse(502)
+        if (!FetchableUrlPolicy.isFetchable(requestedUri)) return PlaylistResponse(422)
+        val bytes = fetchPlaylist(requestedUri) ?: return PlaylistResponse(502)
+        val rewritten = runCatching {
+            rewrite(bytes, resource.uri, ::expose)
+        }.getOrNull() ?: return PlaylistResponse(422)
+        return PlaylistResponse(200, rewritten)
     }
 
     private fun serveMedia(socket: Socket, request: RtspRequest, uri: String) {
@@ -168,6 +199,7 @@ internal class HlsPlaylistProxy(
     override fun close() {
         runCatching { listener.close() }
         sockets.forEach { runCatching { it.close() } }
+        playlistLoads.values.forEach { it.complete(PlaylistResponse(502)) }
         downloads.forEach { it.disconnect() }
         pool.shutdownNow()
     }
@@ -175,7 +207,31 @@ internal class HlsPlaylistProxy(
     companion object {
         private const val MAX_MEDIA_BYTES = 32L * 1024 * 1024
         internal const val MAX_PLAYLIST_BYTES = 256 * 1024
+        private val reloadSequence = Regex("[0-9]{1,18}")
         private val uriAttribute = Regex("URI=\"([^\"\r\n]+)\"")
+
+        /** Preserve the origin's query and forward only recognized HLS reload fields. */
+        internal fun playlistReloadUri(source: String, localQuery: String): String {
+            if (localQuery.isEmpty()) return source
+            val fields = mutableMapOf<String, String>()
+            for (part in localQuery.split('&')) {
+                val key = part.substringBefore('=')
+                val value = part.substringAfter('=', "")
+                val allowed = when (key) {
+                    "_HLS_msn", "_HLS_part" -> reloadSequence.matches(value)
+                    "_HLS_skip" -> value == "YES" || value == "v2"
+                    else -> false
+                }
+                if (allowed) fields.putIfAbsent(key, value)
+            }
+            if (fields.isEmpty()) return source
+            val base = source.substringBefore('#')
+            val originQuery = base.substringAfter('?', "")
+            val existing = if (originQuery.isEmpty()) emptyList() else originQuery.split('&')
+            val updated = existing.filterNot { it.substringBefore('=') in fields } + fields.map { (key, value) -> "$key=$value" }
+            return base.substringBefore('?') + "?" + updated.joinToString("&") +
+                if ('#' in source) "#" + source.substringAfter('#') else ""
+        }
 
         internal fun rewrite(data: ByteArray, from: String, expose: (String, Boolean) -> String): ByteArray {
             require(data.size in 1..MAX_PLAYLIST_BYTES)

@@ -13,6 +13,7 @@ import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.isActive
@@ -161,7 +162,7 @@ internal class RtspServer(
                 accepted.add(clientSocket)
                 scope.launch(Dispatchers.IO) {
                     try {
-                        clientSocket.use { if (running) dispatchAccepted(it) }
+                        clientSocket.use { if (running) dispatchAccepted(it, scope) }
                     } catch (e: java.io.IOException) {
                         if (running) Logger.d("AirPlay connection closed")
                     } finally {
@@ -179,7 +180,7 @@ internal class RtspServer(
         }
     }
 
-    private fun dispatchAccepted(socket: Socket) {
+    private fun dispatchAccepted(socket: Socket, scope: CoroutineScope) {
         socket.soTimeout = 8_000
         val first = requestReader.read(socket.getInputStream()) ?: return
         if (first.method == "POST" && first.uri == "/reverse") {
@@ -187,15 +188,21 @@ internal class RtspServer(
                 sendResponse(socket.getOutputStream(), RtspResponse(409, "Conflict", protocol = "HTTP/1.1"))
                 return
             }
+            val claimTimeout = scope.launch {
+                delay(30_000)
+                senderHls.expireUnclaimed(socket)
+            }
             try {
                 socket.soTimeout = 0
                 while (running) {
                     val event = requestReader.read(socket.getInputStream()) ?: break
                     if (event.method == "POST" && event.uri == "/action") {
-                        sendResponse(socket.getOutputStream(), senderHls.handleAction(event, socket.inetAddress))
+                        val response = senderHls.handleAction(event, socket.inetAddress)
+                        senderHls.replyOnReverse(socket) { output -> sendResponse(output, response) }
                     }
                 }
             } finally {
+                claimTimeout.cancel()
                 senderHls.disconnected(socket)
             }
             return
