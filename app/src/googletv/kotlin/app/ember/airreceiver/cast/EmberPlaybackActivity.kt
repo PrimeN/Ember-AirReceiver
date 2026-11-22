@@ -60,7 +60,8 @@ class EmberPlaybackActivity : FragmentActivity() {
             }
         })
         lifecycleScope.launch {
-            if (!CastReceiver.isConfigured() || !SettingsRepository(applicationContext).settingsFlow.first().castEnabled) {
+            if (!app.ember.airreceiver.service.LocalNetworkAccess.hasAccess(this@EmberPlaybackActivity) ||
+                !CastReceiver.isConfigured() || !SettingsRepository(applicationContext).settingsFlow.first().castEnabled) {
                 finish()
                 return@launch
             }

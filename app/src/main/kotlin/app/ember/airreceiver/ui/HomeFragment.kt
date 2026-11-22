@@ -146,7 +146,9 @@ class HomeFragment : Fragment() {
         requireView().findViewById<Button>(R.id.btn_connection_help).setOnClickListener { showConnectionHelp() }
         btnStart.setOnClickListener {
             Logger.d("User tapped Start")
-            ServiceController.start(requireContext())
+            if ((activity as? AirReceiverActivity)?.requestLocalNetworkPermissionIfNeeded() != true) {
+                ServiceController.start(requireContext())
+            }
         }
         btnStop.setOnClickListener {
             Logger.d("User tapped Stop")
@@ -154,6 +156,7 @@ class HomeFragment : Fragment() {
         }
         btnRestart.setOnClickListener {
             Logger.d("User tapped Restart")
+            if ((activity as? AirReceiverActivity)?.requestLocalNetworkPermissionIfNeeded() == true) return@setOnClickListener
             val permissionRequired = service?.miracastState?.value == ProtocolState.PERMISSION_REQUIRED
             if (!permissionRequired ||
                 (activity as? AirReceiverActivity)?.requestMiracastPermissionIfNeeded() != true
@@ -271,7 +274,9 @@ class HomeFragment : Fragment() {
                 R.color.status_transitioning, R.string.protocol_detail_preparing)
             ProtocolState.PERMISSION_REQUIRED -> Triple(
                 R.string.protocol_state_permission_required, R.color.status_stopped,
-                R.string.protocol_detail_miracast_permission
+                if (app.ember.airreceiver.service.LocalNetworkAccess.hasAccess(requireContext())) {
+                    R.string.protocol_detail_miracast_permission
+                } else R.string.ember_local_network_permission
             )
             ProtocolState.NOT_CONFIGURED -> Triple(
                 R.string.protocol_state_not_configured, R.color.status_disabled,

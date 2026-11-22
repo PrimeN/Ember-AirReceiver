@@ -55,6 +55,42 @@ import app.ember.airreceiver.ui.StreamingScreen
  */
 class AirReceiverActivity : AppCompatActivity() {
 
+    private val localNetworkPermissionRequest =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) ServiceController.start(this)
+            else showLocalNetworkPermissionHelp()
+        }
+
+    private var returningFromNetworkSettings = false
+
+    internal fun requestLocalNetworkPermissionIfNeeded(): Boolean {
+        val access = app.ember.airreceiver.service.LocalNetworkAccess
+        if (access.hasAccess(this)) return false
+        localNetworkPermissionRequest.launch(access.PERMISSION)
+        return true
+    }
+
+    private fun showLocalNetworkPermissionHelp() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.protocol_state_permission_required)
+            .setMessage(R.string.ember_local_network_permission)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.miracast_open_app_settings) { _, _ ->
+                returningFromNetworkSettings = true
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", packageName, null)))
+            }
+            .show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (returningFromNetworkSettings) {
+            returningFromNetworkSettings = false
+            ServiceController.start(this)
+        }
+    }
+
     private val miracastPermissionRequest =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
             ServiceController.restart(this)
@@ -71,6 +107,7 @@ class AirReceiverActivity : AppCompatActivity() {
         }
 
     internal fun requestMiracastPermissionIfNeeded(): Boolean {
+        if (requestLocalNetworkPermissionIfNeeded()) return true
         if (getSystemService(WIFI_P2P_SERVICE) == null ||
             ContextCompat.checkSelfPermission(this, miracastPermission) == PackageManager.PERMISSION_GRANTED
         ) return false
@@ -133,7 +170,7 @@ class AirReceiverActivity : AppCompatActivity() {
         ServiceController.start(this)
 
         // Android 13+ requires an explicit runtime grant for POST_NOTIFICATIONS
-        requestNotificationPermission()
+        if (!requestLocalNetworkPermissionIfNeeded()) requestNotificationPermission()
     }
 
     override fun onStart() {

@@ -118,7 +118,10 @@ class AirReceiverService : Service() {
         networkRecovery = NetworkRecoveryMonitor(
             context = applicationContext,
             isServiceRunning = { stateBus.serviceState.value == ServiceState.Running },
-            onNetworkRestored = { receivers.readvertiseAll() }
+            onNetworkRestored = {
+                if (LocalNetworkAccess.hasAccess(this)) receivers.readvertiseAll()
+                else serviceScope.launch { startReceivers() }
+            }
         )
         mediaControls = EmberMediaSession(this, ::setAirPlayUrlRate, ::seekAirPlayUrl, ::stopAirPlayUrl, ::sendAirPlayRemoteCommand)
         serviceScope.launch {
@@ -235,6 +238,17 @@ class AirReceiverService : Service() {
                 "Miracast=${settings.miracastEnabled}, Cast=${settings.castEnabled}, " +
                 "DLNA=${settings.dlnaEnabled}"
         )
+        if (!LocalNetworkAccess.hasAccess(this)) {
+            receivers.stopAllReceiversInternal()
+            fun required(enabled: Boolean) = if (enabled) ProtocolState.PERMISSION_REQUIRED else ProtocolState.DISABLED
+            stateBus.airPlayStateFlow.value = required(settings.airPlayEnabled)
+            stateBus.miracastStateFlow.value = required(settings.miracastEnabled)
+            stateBus.castStateFlow.value = required(settings.castEnabled && app.ember.airreceiver.BuildConfig.FLAVOR == "googletv")
+            stateBus.dlnaStateFlow.value = required(settings.dlnaEnabled)
+            _serviceState.value = ServiceState.Stopped
+            notifications.updateNotification(isRunning = false)
+            return
+        }
         logMediaCapabilities()
 
         _serviceState.value = ServiceState.Running

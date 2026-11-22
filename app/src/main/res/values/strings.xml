@@ -226,4 +226,5 @@
     <string name="ember_playback_behind">Back 10 seconds</string>
     <string name="ember_playback_ahead">Forward 10 seconds</string>
     <string name="ember_playback_progress">%1$s / %2$s</string>
+    <string name="ember_local_network_permission">Allow Ember AirReceiver to find and connect to devices on your local network.</string>
 </resources>
