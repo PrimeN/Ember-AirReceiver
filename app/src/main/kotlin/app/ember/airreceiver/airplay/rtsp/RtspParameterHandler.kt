@@ -39,7 +39,7 @@ internal class RtspParameterHandler(
         return if (query.startsWith("volume")) {
             RtspResponse(
                 statusCode = 200, statusMessage = "OK",
-                body = "volume: %.6f\r\n".format(currentVolume),
+                body = "volume: %.6f\r\n".format(java.util.Locale.ROOT, currentVolume),
                 contentType = "text/parameters",
                 protocol = request.responseProtocol()
             )

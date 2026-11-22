@@ -89,7 +89,7 @@ internal class RtspVideoUrlHandler(
     /** GET /scrub — current position + duration as text/parameters. */
     internal fun handleScrubGet(request: RtspRequest): RtspResponse {
         val info = onPlaybackInfo()
-        val body = "duration: %.6f\r\nposition: %.6f\r\n".format(info?.durationSec ?: 0.0, info?.positionSec ?: 0.0)
+        val body = "duration: %.6f\r\nposition: %.6f\r\n".format(java.util.Locale.ROOT, info?.durationSec ?: 0.0, info?.positionSec ?: 0.0)
         return RtspResponse(200, "OK", body = body, contentType = "text/parameters", protocol = request.responseProtocol())
     }
 
