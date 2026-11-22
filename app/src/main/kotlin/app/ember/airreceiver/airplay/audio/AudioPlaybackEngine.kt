@@ -7,6 +7,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.media.AudioTimestamp
+import android.os.Build
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
@@ -70,6 +71,7 @@ internal class AudioPlaybackEngine(
     private val cbcCipher = Cipher.getInstance("AES/CBC/NoPadding")
 
     private var codec: MediaCodec? = null
+    private var softwareDecoder = false
     private var alac: AlacDecoder? = null      // software ALAC decoder (ct=2 system-audio path)
     @Volatile private var audioTrack: AudioTrack? = null
     private var firstPcm = true
@@ -106,7 +108,7 @@ internal class AudioPlaybackEngine(
                     }
                     val decrypted = decryptPacket(payload.payload)
                     val ptsUs = presentationNanos(payload.rtpTime)?.div(1000) ?: 0L
-                    if (alac != null) playAlacFrame(decrypted, ptsUs) else decodeFrame(decrypted, ptsUs)
+                    if (alac != null) playAlacFrame(decrypted, ptsUs) else decodeWithRecovery(decrypted, ptsUs)
                 } catch (e: Exception) {
                     if (isRunning()) Logger.e("Audio: frame decode error", e)
                 }
@@ -188,6 +190,18 @@ internal class AudioPlaybackEngine(
         }
     }
 
+    private fun decodeWithRecovery(frame: ByteArray, ptsUs: Long) {
+        try {
+            decodeFrame(frame, ptsUs)
+        } catch (failure: IllegalStateException) {
+            if (softwareDecoder) throw failure
+            runCatching { codec?.release() }
+            codec = null
+            initAacDecoder(softwareOnly = true)
+            decodeFrame(frame, ptsUs)
+        }
+    }
+
     private fun initDecoder() {
         if (codecType == AudioStreamServer.CT_ALAC) {
             // macOS sends ALAC (lossless) for system-audio AirPlay regardless of our advertised
@@ -197,6 +211,10 @@ internal class AudioPlaybackEngine(
             Logger.i("Audio decoder: ALAC ${sampleRate}Hz x$channels spf=$framesPerPacket (ct=2)")
             return
         }
+        initAacDecoder(softwareOnly = false)
+    }
+
+    private fun initAacDecoder(softwareOnly: Boolean) {
         // ct=8 AAC-ELD (mirroring, spf 480) vs ct=4 AAC-LC (audio-only, spf 1024).
         val isAacLc = codecType == AudioStreamServer.CT_AAC_LC
         val profile = if (isAacLc) MediaCodecInfo.CodecProfileLevel.AACObjectLC
@@ -209,6 +227,8 @@ internal class AudioPlaybackEngine(
         }
         val profileName = if (isAacLc) "AAC-LC" else "AAC-ELD"
         val codecs = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+            .filter { !softwareOnly || it.isSoftwareDecoder() }
+            .sortedBy { it.isSoftwareDecoder() }
         var lastFailure: Exception? = null
         for (info in codecs) {
             if (info.isEncoder || info.supportedTypes.none { it.equals(MediaFormat.MIMETYPE_AUDIO_AAC, true) }) {
@@ -217,13 +237,16 @@ internal class AudioPlaybackEngine(
             var candidate: MediaCodec? = null
             try {
                 val capabilities = info.getCapabilitiesForType(MediaFormat.MIMETYPE_AUDIO_AAC)
-                if (capabilities.profileLevels.none { it.profile == profile } ||
-                    !capabilities.isFormatSupported(format)) continue
+                if (!info.isSoftwareDecoder() && (
+                        capabilities.profileLevels.none { it.profile == profile } ||
+                            !capabilities.isFormatSupported(format)
+                    )) continue
 
                 candidate = MediaCodec.createByCodecName(info.name)
                 candidate.configure(format, null, null, 0)
                 candidate.start()
                 codec = candidate
+                softwareDecoder = info.isSoftwareDecoder()
                 Logger.i("Audio decoder: $profileName via ${info.name} (${sampleRate}Hz x$channels)")
                 return
             } catch (e: Exception) {
@@ -234,6 +257,10 @@ internal class AudioPlaybackEngine(
         }
         throw IllegalStateException("No usable $profileName decoder for ${sampleRate}Hz x$channels", lastFailure)
     }
+
+    private fun MediaCodecInfo.isSoftwareDecoder(): Boolean =
+        if (Build.VERSION.SDK_INT >= 29) isSoftwareOnly
+        else name.startsWith("c2.android.") || name.startsWith("OMX.google.")
 
     /** Finish partial writes and recreate a dead output once on the playback thread. */
     private fun writePcm(pcm: ByteArray, ptsUs: Long) {
