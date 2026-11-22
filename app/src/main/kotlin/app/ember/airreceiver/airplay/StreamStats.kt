@@ -20,6 +20,7 @@ object StreamStats {
     @Volatile var overlayEnabled = false
 
     // ─── Video (MirrorStreamServer) ──────────────────────────────────────────
+    @Volatile var videoAdvertised = ""
     @Volatile var videoRes = ""        // e.g. "1920x1080"
     @Volatile var videoFps = 0         // frames/sec over the last sample window
     @Volatile var videoQueue = 0       // current decode-queue depth
@@ -94,7 +95,7 @@ object StreamStats {
 
     /** A new video session must not clear an audio stream that is already running. */
     fun resetVideo() {
-        videoRes = ""; videoFps = 0; videoQueue = 0; videoDropPct = 0
+        videoAdvertised = ""; videoRes = ""; videoFps = 0; videoQueue = 0; videoDropPct = 0
         videoWidth = 0; videoHeight = 0
         listOf(videoReceived, videoSubmitted, videoOutput, videoPresented, videoTextureUpdates, videoInputMiss,
             videoInputRetries, videoRebuilds, videoKeyframeRetries,
@@ -117,7 +118,7 @@ object StreamStats {
             "inputRetry ${videoInputRetries.get()}  rebuild ${videoRebuilds.get()}  IDRretry ${videoKeyframeRetries.get()}\n" +
             "skip ${videoSkipped.get()}  invalid ${videoInvalid.get()}  config ${videoConfigs.get()}\n" +
             "state $videoStage  codec $videoCodec\n" +
-            "SPS $videoConfig  OUT ${videoWidth}x$videoHeight\n" +
+            "Negotiated $videoAdvertised  Input $videoConfig  OUT ${videoWidth}x$videoHeight\n" +
             "surface $videoSurface\n" +
             "errors ${videoErrors.get()}  $videoLastError\n" +
             "AUDIO " + (if (audioActive) "on  q $audioQueue  dup $audioDupPct%" else "off")

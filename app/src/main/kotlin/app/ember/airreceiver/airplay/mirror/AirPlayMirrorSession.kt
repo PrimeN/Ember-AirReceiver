@@ -57,7 +57,8 @@ internal class AirPlayMirrorSession(
     /** Publishes the protocol state of the session. */
     private val onStateChanged: (ProtocolState) -> Unit,
     private val onVideoFailure: (String) -> Unit = {},
-    private val hevcEnabled: Boolean = false
+    private val hevcEnabled: Boolean = false,
+    private val advertisedFps: Int = 60
 ) {
 
     // AirPlay 2 mirroring: data stream server + event channel + keys (set during SETUP).
@@ -140,6 +141,7 @@ internal class AirPlayMirrorSession(
             reportVideoTimeout(generation)
         }
         server.start(scope)
+        StreamStats.videoAdvertised = "${mirrorWidth}x${mirrorHeight} @ $advertisedFps"
         return server.dataPort
     }
 

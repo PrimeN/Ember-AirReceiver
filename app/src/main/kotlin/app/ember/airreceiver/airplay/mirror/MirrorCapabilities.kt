@@ -1,5 +1,8 @@
 package app.ember.airreceiver.airplay.mirror
 
+import android.content.Context
+import android.hardware.display.DisplayManager
+import android.view.Display
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
@@ -24,6 +27,11 @@ internal object MirrorCapabilities {
     fun supportsHevc(width: Int, height: Int, fps: Int): Boolean =
         Build.VERSION.SDK_INT >= 29 && supports(MediaFormat.MIMETYPE_VIDEO_HEVC, width, height, fps, true)
 
-    fun supportsAvc(width: Int, height: Int, fps: Int): Boolean =
-        supports(MediaFormat.MIMETYPE_VIDEO_AVC, width, height, fps, false)
+    fun frameRate(context: Context, width: Int, height: Int): Int {
+        val refreshRate = runCatching {
+            context.getSystemService(DisplayManager::class.java)
+                ?.getDisplay(Display.DEFAULT_DISPLAY)?.mode?.refreshRate
+        }.getOrNull() ?: 60f
+        return if (refreshRate >= 59f && supports(MediaFormat.MIMETYPE_VIDEO_AVC, width, height, 60, false)) 60 else 30
+    }
 }

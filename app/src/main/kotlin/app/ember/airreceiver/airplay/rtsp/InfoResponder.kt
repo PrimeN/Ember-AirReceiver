@@ -20,7 +20,7 @@ import app.ember.airreceiver.util.NetworkUtils
  */
 object InfoResponder {
 
-    fun build(context: Context, width: Int = 1920, height: Int = 1080, pinRequired: Boolean = false, hevcEnabled: Boolean = false): ByteArray {
+    fun build(context: Context, width: Int = 1920, height: Int = 1080, pinRequired: Boolean = false, hevcEnabled: Boolean = false, advertisedFps: Int = 60): ByteArray {
         val mac = NetworkUtils.getMacAddress()
         // When PIN access control is on, set the "pairing/PIN required" status bit so the sender runs
         // the SRP pair-setup flow. NOTE: exact flag semantics are sender-version-dependent — verify
@@ -63,7 +63,8 @@ object InfoResponder {
                     "widthPixels" to width.toLong(),
                     "heightPixels" to height.toLong(),
                     "rotation" to false,
-                    "refreshRate" to (1.0 / 60.0),
+                    "refreshRate" to (1.0 / advertisedFps),
+                    "maxFPS" to advertisedFps.toLong(),
                     "overscanned" to false,   // false = macOS uses the full advertised resolution
                     "features" to 14L
                 )

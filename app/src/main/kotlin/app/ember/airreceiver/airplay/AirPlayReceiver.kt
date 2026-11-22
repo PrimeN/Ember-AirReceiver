@@ -143,8 +143,11 @@ class AirPlayReceiver(
     // Classic AirPlay media pipeline: video decoder, audio player, audio UDP socket.
     private val mediaPipeline = AirPlayMediaPipeline(scope, videoSurfaceProvider)
 
+    private val advertisedFps by lazy {
+        app.ember.airreceiver.airplay.mirror.MirrorCapabilities.frameRate(context, mirrorWidth, mirrorHeight)
+    }
     private val hevcEnabled by lazy {
-        app.ember.airreceiver.airplay.mirror.MirrorCapabilities.supportsHevc(mirrorWidth, mirrorHeight, 60)
+        app.ember.airreceiver.airplay.mirror.MirrorCapabilities.supportsHevc(mirrorWidth, mirrorHeight, advertisedFps)
     }
 
     // AirPlay 2 mirroring: keys, event channel, NTP, mirror data/audio servers.
@@ -157,6 +160,7 @@ class AirPlayReceiver(
         onSenderNameChanged = { name -> onSenderNameChanged(name) },
         onVideoSessionChanged = { hasVideo -> onVideoSessionChanged(hasVideo) },
         hevcEnabled = hevcEnabled,
+        advertisedFps = advertisedFps,
         onStateChanged = ::emitState,
         onVideoFailure = { reason ->
             sessionProgress.fail(reason)
@@ -280,6 +284,7 @@ class AirPlayReceiver(
             context = context,
             displayWidth = mirrorWidth,
             displayHeight = mirrorHeight,
+            advertisedFps = advertisedFps,
             hevcEnabled = hevcEnabled,
             audioEnabled = audioEnabled,
             videoSurfaceProvider = videoSurfaceProvider,
@@ -433,10 +438,6 @@ class AirPlayReceiver(
 
     /** Dispatches [state] on the Main thread (Android UI rule). */
     private fun emitState(state: ProtocolState) {
-        scope.launch {
-            withContext(Dispatchers.Main) {
-                onStateChanged(state)
-            }
-        }
+        scope.launch(Dispatchers.Main.immediate) { onStateChanged(state) }
     }
 }
