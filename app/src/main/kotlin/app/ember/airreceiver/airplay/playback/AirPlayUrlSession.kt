@@ -36,7 +36,8 @@ internal class AirPlayUrlSession(
     /** Publishes the protocol state of the session. */
     private val onStateChanged: (ProtocolState) -> Unit,
     /** Called when the URL playback ends — the owner tears the session down. */
-    private val onStreamingStopped: () -> Unit
+    private val onStreamingStopped: () -> Unit,
+    private val cancelPlaylistPlayback: () -> Unit = {}
 ) {
 
     // The MediaPlayer-based URL player — created on the first /play request.
@@ -56,6 +57,7 @@ internal class AirPlayUrlSession(
             surfaceProvider = videoSurfaceProvider,
             onReady = { onStateChanged(ProtocolState.CONNECTED) },
             onTerminal = { phase ->
+                cancelPlaylistPlayback()
                 terminal = PlaybackInfo(0.0, 0.0, 0.0, false, phase)
                 if (phase == PlaybackPhase.FAILED) onStateChanged(ProtocolState.ERROR)
                 else onStateChanged(ProtocolState.ADVERTISING)
@@ -66,6 +68,7 @@ internal class AirPlayUrlSession(
 
     /** Stops AirPlay video URL playback (POST /stop or end-of-media) and ends the session. */
     internal fun stopUrlVideo() {
+        cancelPlaylistPlayback()
         release()
         onStreamingStopped()
         Logger.i("AirPlay URL video stopped")

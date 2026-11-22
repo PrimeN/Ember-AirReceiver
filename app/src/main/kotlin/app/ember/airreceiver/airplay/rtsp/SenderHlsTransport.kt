@@ -37,6 +37,9 @@ internal class SenderHlsTransport(
     }
 
     @Synchronized
+    fun isPlaying(): Boolean = proxy != null
+
+    @Synchronized
     fun ownsPlayback(peer: InetAddress): Boolean = proxy != null && channel?.peer == peer
 
     @Synchronized
@@ -53,15 +56,15 @@ internal class SenderHlsTransport(
     fun play(request: RtspRequest, peer: InetAddress?, url: String, offset: MediaStartPosition): Int? {
         val canRelay = peer != null && matches(request, peer) &&
             runCatching { URI(url).path.endsWith(".m3u8", true) }.getOrDefault(false)
-        var playerUrl = url
-        synchronized(this) {
+        val playerUrl = synchronized(this) {
             if (canRelay) {
                 val attached = channel ?: return null
                 stopPlayback()
                 val load = generation
-                val relay = HlsPlaylistProxy(url) { fetch(attached, load, it) }
+                val relay = runCatching { HlsPlaylistProxy(url) { fetch(attached, load, it) } }.getOrNull()
+                    ?: return 503
                 proxy = relay
-                playerUrl = relay.url
+                relay.url
             } else {
                 stopPlayback()
                 return null

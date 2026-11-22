@@ -140,6 +140,8 @@ open class RtspHandler(
 
     private val senderHls = SenderHlsTransport(onVideoPlay, onVideoStop)
 
+    internal fun cancelPlaylistPlayback() = senderHls.stopPlayback()
+
     /** The AirPlay URL-video mode: /play, /rate, /scrub, /stop and /playback-info. */
     private val videoUrlHandler: RtspVideoUrlHandler by lazy {
         RtspVideoUrlHandler(

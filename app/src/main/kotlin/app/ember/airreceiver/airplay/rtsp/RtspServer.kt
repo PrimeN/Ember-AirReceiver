@@ -204,7 +204,7 @@ internal class RtspServer(
             sendResponse(socket.getOutputStream(), senderHls.handleAction(first, socket.inetAddress))
             return
         }
-        if (senderHls.ownsPlayback(socket.inetAddress) && !senderHls.matches(first, socket.inetAddress)) {
+        if (senderHls.isPlaying() && !senderHls.matches(first, socket.inetAddress)) {
             sendServiceUnavailable(socket)
             return
         }

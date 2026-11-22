@@ -174,7 +174,8 @@ class AirPlayReceiver(
         onSenderNameChanged = { name -> onSenderNameChanged(name) },
         onVideoSessionChanged = { hasVideo -> onVideoSessionChanged(hasVideo) },
         onStateChanged = { state -> emitState(state) },
-        onStreamingStopped = { onStreamingStopped() }
+        onStreamingStopped = { onStreamingStopped() },
+        cancelPlaylistPlayback = { rtspHandler?.cancelPlaylistPlayback() }
     )
 
     /**

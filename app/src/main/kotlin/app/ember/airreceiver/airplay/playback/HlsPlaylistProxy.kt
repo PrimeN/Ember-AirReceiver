@@ -130,7 +130,8 @@ internal class HlsPlaylistProxy(
                 val output = socket.getOutputStream()
                 val buffer = ByteArray(16 * 1024)
                 var remaining = MAX_MEDIA_BYTES
-                while (remaining > 0 && !listener.isClosed) {
+                val deadline = System.nanoTime() + 20_000_000_000L
+                while (remaining > 0 && !listener.isClosed && System.nanoTime() - deadline < 0L) {
                     val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
                     if (read <= 0) break
                     output.write(buffer, 0, read)
