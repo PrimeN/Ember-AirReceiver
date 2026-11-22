@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ─── Backgrounds (warm charcoal) ─────────────────────── -->
+    <!-- App background — warm near-black, easy on an OLED TV without the flat blue of true black -->
+    <color name="background_dark">#FF171517</color>
+    <!-- Surface elevation: cards, sheets, nav panel -->
+    <color name="background_surface">#FF211D1B</color>
+    <!-- Slightly lighter surface for hover/pressed states -->
+    <color name="background_surface_elevated">#FF2E2825</color>
+    <!-- Dividers and separators -->
+    <color name="ember_surface_warm">#FF392A23</color>
+    <color name="ember_selection">#33FFB575</color>
+    <color name="divider">#FF3A322E</color>
+
+    <!-- ─── Text (warm off-white) ────────────────────────────── -->
+    <color name="text_primary">#FFF3E7DF</color>
+    <color name="text_secondary">#FFB7A99F</color>
+    <color name="text_tertiary">#FFA79A90</color>
+    <!-- Text/icons drawn ON the amber accent — dark warm for contrast on a light accent -->
+    <color name="text_on_accent">#FF241A15</color>
+
+    <!-- ─── Accent (Ember amber) ─────────────────────────────── -->
+    <!-- Name kept as accent_blue so layouts/drawables need no change; the value is amber. -->
+    <color name="accent_blue">#FFFFB575</color>
+    <color name="accent_blue_pressed">#FFE09A5A</color>
+    <color name="focus_ring">#FFFFB575</color>
+
+    <!-- ─── Protocol status colors ──────────────────────────── -->
+    <!-- Green: service running / connected (warmed slightly to sit with the palette) -->
+    <color name="status_running">#FF4FC98A</color>
+    <!-- Red: service stopped / error (warm red) -->
+    <color name="status_stopped">#FFFF6B5E</color>
+    <!-- Gray: service disabled by user -->
+    <color name="status_disabled">#FF8A7D74</color>
+    <!-- Amber: service starting / restarting -->
+    <color name="status_transitioning">#FFFFC766</color>
+
+    <!-- ─── Protocol brand colors ────────────────────────────── -->
+    <!-- AirPlay: the hero protocol — the family amber -->
+    <color name="protocol_airplay">#FFFFB575</color>
+    <!-- Miracast: warm green, kept distinct from the accent -->
+    <color name="protocol_miracast">#FF5BD6A0</color>
+    <!-- Cast: warm blue, kept distinct from the accent -->
+    <color name="protocol_cast">#FF6FA0F0</color>
+
+    <!-- ─── Navigation ────────────────────────────────────────── -->
+    <color name="nav_panel_background">#FF141211</color>
+    <color name="nav_item_selected">#FFFFB575</color>
+    <color name="nav_item_normal">#FFB7A99F</color>
+</resources>
