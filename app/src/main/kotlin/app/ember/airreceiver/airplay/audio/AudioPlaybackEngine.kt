@@ -6,6 +6,7 @@ import app.ember.airreceiver.util.PlaybackFocus
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.media.AudioTimestamp
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
@@ -50,8 +51,9 @@ internal class AudioPlaybackEngine(
     private val codecType: Int,
     private val framesPerPacket: Int,
     /** Bounded jitter buffer filled by the receive thread. */
-    private val frameQueue: ArrayBlockingQueue<ByteArray>,
+    private val frameQueue: ArrayBlockingQueue<RealtimeAudioFrame>,
     /** True while the audio session is running — the playback loop stops when it turns false. */
+    private val presentationNanos: (Int) -> Long? = { null },
     private val isRunning: () -> Boolean
 ) {
 
@@ -73,6 +75,8 @@ internal class AudioPlaybackEngine(
     private var firstPcm = true
     private var outputSampleRate = sampleRate
     private var outputChannels = channels
+    private val outputTimestamp = AudioTimestamp()
+    private var writtenBytes = 0L
     private var outputEncoding = AudioFormat.ENCODING_PCM_16BIT
 
     /**
@@ -96,11 +100,13 @@ internal class AudioPlaybackEngine(
                         } finally {
                             codec?.flush()
                         }
+                        writtenBytes = 0
                         audioTrack?.play()
                         continue
                     }
-                    val decrypted = decryptPacket(payload)
-                    if (alac != null) playAlacFrame(decrypted) else decodeFrame(decrypted)
+                    val decrypted = decryptPacket(payload.payload)
+                    val ptsUs = presentationNanos(payload.rtpTime)?.div(1000) ?: 0L
+                    if (alac != null) playAlacFrame(decrypted, ptsUs) else decodeFrame(decrypted, ptsUs)
                 } catch (e: Exception) {
                     if (isRunning()) Logger.e("Audio: frame decode error", e)
                 }
@@ -121,10 +127,10 @@ internal class AudioPlaybackEngine(
     }
 
     /** Decode one decrypted ALAC frame to PCM and write it to AudioTrack (blocking, paces playback). */
-    private fun playAlacFrame(frame: ByteArray) {
+    private fun playAlacFrame(frame: ByteArray, ptsUs: Long) {
         val pcm = alac?.decode(frame) ?: return
         if (firstPcm) { Logger.i("Audio: first decoded ALAC PCM (${pcm.size}B) → AudioTrack"); firstPcm = false }
-        writePcm(pcm)
+        writePcm(pcm, ptsUs)
     }
 
     /** AES-128-CBC decrypt the whole-block portion; the trailing < 16 bytes stay cleartext. */
@@ -137,12 +143,12 @@ internal class AudioPlaybackEngine(
         return out
     }
 
-    private fun decodeFrame(aac: ByteArray) {
+    private fun decodeFrame(aac: ByteArray, ptsUs: Long) {
         val mc = codec ?: return
         val inIdx = mc.dequeueInputBuffer(10_000)
         if (inIdx >= 0) {
             mc.getInputBuffer(inIdx)!!.apply { clear(); put(aac) }
-            mc.queueInputBuffer(inIdx, 0, aac.size, 0, 0)
+            mc.queueInputBuffer(inIdx, 0, aac.size, ptsUs, 0)
         }
         val info = MediaCodec.BufferInfo()
         while (true) {
@@ -174,7 +180,7 @@ internal class AudioPlaybackEngine(
                         Logger.i("Audio: first decoded PCM (${pcm.size}B) → AudioTrack")
                         firstPcm = false
                     }
-                    writePcm(pcm)
+                    writePcm(pcm, info.presentationTimeUs)
                 }
             } finally {
                 mc.releaseOutputBuffer(outIdx, false)
@@ -230,15 +236,31 @@ internal class AudioPlaybackEngine(
     }
 
     /** Finish partial writes and recreate a dead output once on the playback thread. */
-    private fun writePcm(pcm: ByteArray) {
+    private fun writePcm(pcm: ByteArray, ptsUs: Long) {
         if (!focus.acquire()) return
+        val initialTrack = audioTrack ?: initAudioTrack()
+        if (ptsUs > 0L) {
+            val now = System.nanoTime()
+            val queuedNs = if (initialTrack.getTimestamp(outputTimestamp)) {
+                val outstanding = writtenBytes / (outputChannels * 2) - outputTimestamp.framePosition
+                (outstanding * 1_000_000_000L / outputSampleRate + outputTimestamp.nanoTime - now)
+                    .coerceIn(0L, 250_000_000L)
+            } else 0L
+            val waitNs = ptsUs * 1000L - now - queuedNs
+            if (waitNs in -3_000_000_000L..-150_000_000L) return
+            // A bad or stale sender clock must not hold the realtime playback thread.
+            if (waitNs in 1_000_000L..500_000_000L) Thread.sleep((waitNs / 1_000_000L).coerceAtMost(60))
+        }
         var offset = 0
         var retried = false
         while (offset < pcm.size && isRunning()) {
             val track = audioTrack ?: initAudioTrack()
             val written = track.write(pcm, offset, pcm.size - offset, AudioTrack.WRITE_BLOCKING)
             when {
-                written > 0 -> offset += written
+                written > 0 -> {
+                    offset += written
+                    writtenBytes += written
+                }
                 written == AudioTrack.ERROR_DEAD_OBJECT && !retried -> {
                     releaseAudioTrack()
                     retried = true
@@ -255,6 +277,7 @@ internal class AudioPlaybackEngine(
     private fun releaseAudioTrack() {
         val track = audioTrack
         audioTrack = null
+        writtenBytes = 0
         runCatching { track?.stop() }
         runCatching { track?.release() }
     }

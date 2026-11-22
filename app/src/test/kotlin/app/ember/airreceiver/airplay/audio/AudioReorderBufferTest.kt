@@ -10,7 +10,7 @@ import org.junit.Test
 
 /** Verifies that loss and RTSP flush boundaries cannot strand or replay queued audio. */
 class AudioReorderBufferTest {
-    private val queue = ArrayBlockingQueue<ByteArray>(3)
+    private val queue = ArrayBlockingQueue<RealtimeAudioFrame>(3)
     private var now = 0L
     private val buffer = AudioReorderBuffer(queue, object : RaopControlChannel {
         override fun send(payload: ByteArray, address: SocketAddress) = Unit
@@ -21,14 +21,14 @@ class AudioReorderBufferTest {
         packet(100)
         packet(102)
         packet(104)
-        assertArrayEquals(byteArrayOf(100), queue.poll())
+        assertArrayEquals(byteArrayOf(100), queue.poll()?.payload)
         now = 59_000_000
         buffer.expireGap()
         assertNull(queue.poll())
         now = 60_000_000
         buffer.expireGap()
-        assertArrayEquals(byteArrayOf(102), queue.poll())
-        assertArrayEquals(byteArrayOf(104), queue.poll())
+        assertArrayEquals(byteArrayOf(102), queue.poll()?.payload)
+        assertArrayEquals(byteArrayOf(104), queue.poll()?.payload)
         packet(101)
         assertNull(queue.poll())
     }
@@ -42,8 +42,8 @@ class AudioReorderBufferTest {
         packet(0)
         packet(65535)
         assertSame(AudioReorderBuffer.FLUSH, queue.poll())
-        assertArrayEquals(byteArrayOf(-1), queue.poll())
-        assertArrayEquals(byteArrayOf(0), queue.poll())
+        assertArrayEquals(byteArrayOf(-1), queue.poll()?.payload)
+        assertArrayEquals(byteArrayOf(0), queue.poll()?.payload)
         assertNull(queue.poll())
     }
 
@@ -52,8 +52,8 @@ class AudioReorderBufferTest {
         buffer.flush(null)
         for (seq in 0..5) packet(seq)
         assertSame(AudioReorderBuffer.FLUSH, queue.poll())
-        assertArrayEquals(byteArrayOf(4), queue.poll())
-        assertArrayEquals(byteArrayOf(5), queue.poll())
+        assertArrayEquals(byteArrayOf(4), queue.poll()?.payload)
+        assertArrayEquals(byteArrayOf(5), queue.poll()?.payload)
     }
 
     private fun packet(sequence: Int) {

@@ -28,9 +28,11 @@ import java.util.concurrent.ArrayBlockingQueue
  *   buffer.senderCtrlAddr = senderAddress
  *   buffer.handleRtpPacket(datagram.data, 0, datagram.length)
  */
+internal class RealtimeAudioFrame(val payload: ByteArray, val rtpTime: Int)
+
 internal class AudioReorderBuffer(
     /** Bounded jitter buffer between the receive thread and the playback thread. */
-    private val frameQueue: ArrayBlockingQueue<ByteArray>,
+    private val frameQueue: ArrayBlockingQueue<RealtimeAudioFrame>,
     /** Sink for the RAOP resend requests this buffer produces. */
     private val controlChannel: RaopControlChannel,
     private val nanoTime: () -> Long = System::nanoTime
@@ -45,7 +47,7 @@ internal class AudioReorderBuffer(
     // Both the data and control receive threads use reorderLock.
     private val reorderLock = Any()
     private val sendLock = Any()                       // serialises control-socket resend sends
-    private val reorder = HashMap<Int, ByteArray>()   // seq → decrypted-pending RTP payload
+    private val reorder = HashMap<Int, RealtimeAudioFrame>()   // seq → decrypted-pending RTP payload
     private var nextSeq = -1                            // next seq to release in order (-1 = uninit)
     private var maxSeq = -1                             // highest seq seen (for gap detection)
     private var gapDeadline: Long? = null
@@ -83,11 +85,12 @@ internal class AudioReorderBuffer(
         if (length <= RTP_HEADER) return
         val seq = rtpSequence(src, offset)
         // RAOP RTP: 12-byte header, then AES-128-CBC-encrypted audio payload (copied out of src).
-        val payload = src.copyOfRange(offset + RTP_HEADER, offset + length)
+        val timestamp = java.nio.ByteBuffer.wrap(src, offset + 4, 4).int
+        val frame = RealtimeAudioFrame(src.copyOfRange(offset + RTP_HEADER, offset + length), timestamp)
         val resend = synchronized(reorderLock) {
             releaseExpiredGap()
             if (isDuplicateSeq(seq)) { dupCount++; return }
-            enqueueInOrder(seq, payload)
+            enqueueInOrder(seq, frame)
         }
         // Send the resend request OUTSIDE the reorder lock — never hold it across socket I/O.
         resend?.let { requestResend(it[0], it[1]) }
@@ -97,7 +100,7 @@ internal class AudioReorderBuffer(
      * Inserts [seq]/[payload] into the reorder buffer and releases all now-contiguous packets to the
      * player in order. Returns the [startSeq, count] of a missing range to resend (or null). Under [reorderLock].
      */
-    private fun enqueueInOrder(seq: Int, payload: ByteArray): IntArray? {
+    private fun enqueueInOrder(seq: Int, payload: RealtimeAudioFrame): IntArray? {
         if (nextSeq < 0) { nextSeq = seq; maxSeq = seq }      // first packet anchors the stream
         // Ignore packets older than what we've already released (a late resend we gave up on).
         if (seqDiff(seq, nextSeq) < 0) return null
@@ -200,7 +203,7 @@ internal class AudioReorderBuffer(
 
     companion object {
         // Payloads are nonempty, so this identity can be reserved for a playback command.
-        internal val FLUSH = ByteArray(0)
+        internal val FLUSH = RealtimeAudioFrame(ByteArray(0), 0)
         private const val GAP_WAIT_NS = 60_000_000L
 
         internal fun rtpSequence(packet: ByteArray, offset: Int = 0): Int =

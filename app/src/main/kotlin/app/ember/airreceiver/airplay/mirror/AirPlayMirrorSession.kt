@@ -72,6 +72,7 @@ internal class AirPlayMirrorSession(
     @Volatile private var eventClientSocket: java.net.Socket? = null
     @Volatile private var mirrorAesKey: ByteArray? = null
     @Volatile private var mirrorEcdhSecret: ByteArray? = null
+    @Volatile private var mirrorPeer: java.net.InetAddress? = null
     @Volatile private var mirrorAesIv: ByteArray? = null
 
     /**
@@ -86,6 +87,7 @@ internal class AirPlayMirrorSession(
         remoteAddress: java.net.InetAddress,
         senderTimingPort: Int,
     ): Pair<Int, Int> {
+        mirrorPeer = remoteAddress
         mirrorAesKey = aesKey
         mirrorEcdhSecret = ecdhSecret
         mirrorAesIv = aesIv
@@ -180,7 +182,7 @@ internal class AirPlayMirrorSession(
         val aesKey = mirrorAesKey ?: run { Logger.e("audio start before keys set"); return 0 to 0 }
         val ecdhSecret = mirrorEcdhSecret ?: return 0 to 0
         val aesIv = mirrorAesIv ?: return 0 to 0
-        val server = AudioStreamServer(aesKey, ecdhSecret, aesIv, sampleRate, channels, codecType, framesPerPacket)
+        val server = AudioStreamServer(aesKey, ecdhSecret, aesIv, sampleRate, channels, codecType, framesPerPacket, ntpClient, mirrorPeer)
             .also { audioServer = it; it.start(scope) }
         nowPlaying.audioPlaying = true
         nowPlaying.emitNowPlaying()
@@ -278,5 +280,6 @@ internal class AirPlayMirrorSession(
         mirrorAesKey = null
         mirrorEcdhSecret = null
         mirrorAesIv = null
+        mirrorPeer = null
     }
 }

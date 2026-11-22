@@ -7,6 +7,7 @@ import app.ember.airreceiver.airplay.StreamStats
 import app.ember.airreceiver.util.Logger
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.nio.ByteBuffer
 import java.net.SocketAddress
 import java.net.SocketTimeoutException
 import java.util.concurrent.ArrayBlockingQueue
@@ -46,6 +47,8 @@ class AudioStreamServer(
     private val channels: Int,
     private val codecType: Int = CT_AAC_ELD,   // SETUP ct: 8 = AAC-ELD (mirror), 4 = AAC-LC (audio-only)
     framesPerPacket: Int = DEFAULT_ALAC_FRAMES,   // SETUP spf — ALAC frameLength (352)
+    private val timingClient: app.ember.airreceiver.airplay.timing.AirPlayNtpClient? = null,
+    private val peer: java.net.InetAddress? = null
 ) {
 
     // Bind to the IPv6 wildcard (dual-stack) — macOS sends the audio RTP over the session's
@@ -58,7 +61,7 @@ class AudioStreamServer(
     // Decoded-audio jitter buffer: raw (post-dedup) RTP payloads handed from the receive thread to
     // the playback thread. Bounded so a stalled player can't grow latency unboundedly — if it fills
     // we drop the oldest frame (a brief glitch is better than ever-growing audio lag).
-    private val frameQueue = ArrayBlockingQueue<ByteArray>(AUDIO_QUEUE_CAPACITY)
+    private val frameQueue = ArrayBlockingQueue<RealtimeAudioFrame>(AUDIO_QUEUE_CAPACITY)
 
     /**
      * Sends one RAOP control datagram over the control socket.
@@ -74,6 +77,18 @@ class AudioStreamServer(
     // RTP ordering, duplicate suppression and packet-loss retransmit.
     private val reorderBuffer = AudioReorderBuffer(frameQueue, SocketControlChannel())
 
+    private data class AudioAnchor(val rtpTime: Int, val ntpTime: Long)
+    @Volatile private var anchor: AudioAnchor? = null
+
+    private fun presentationNanos(rtpTime: Int): Long? {
+        val current = anchor ?: return null
+        val now = System.nanoTime()
+        val base = timingClient?.mirrorPresentationNanos(current.ntpTime, now) ?: return null
+        // Int subtraction gives the signed distance across the 32-bit sample counter rollover.
+        val samples = rtpTime - current.rtpTime
+        return base + samples.toLong() * 1_000_000_000L / sampleRate
+    }
+
     // Decoder + AudioTrack + crypto — owned and released by the playback thread alone.
     private val playback = AudioPlaybackEngine(
         aesKey = aesKey,
@@ -84,6 +99,7 @@ class AudioStreamServer(
         codecType = codecType,
         framesPerPacket = framesPerPacket,
         frameQueue = frameQueue,
+        presentationNanos = ::presentationNanos,
         isRunning = { running }
     )
 
@@ -115,6 +131,7 @@ class AudioStreamServer(
             while (running) {
                 pkt.length = buf.size     // reset capacity before each receive (see runReceive)
                 controlSocket.receive(pkt)
+                if (pkt.length < 2 || (peer != null && pkt.address != peer)) continue
                 reorderBuffer.senderCtrlAddr = pkt.socketAddress   // where to send resend requests
                 if (ctrlCount < 6) {
                     Logger.i("Audio CTRL[$ctrlCount] ${pkt.length}B: ${hex(pkt.data, minOf(20, pkt.length))}")
@@ -122,6 +139,10 @@ class AudioStreamServer(
                 }
                 // RTP payload type is bits 0–6 of byte 1 (byte 1 = marker<<7 | type).
                 val payloadType = pkt.data[1].toInt() and 0x7F
+                if (payloadType == 0x54 && pkt.length >= 20 && sampleRate > 0) {
+                    val fields = ByteBuffer.wrap(pkt.data)
+                    anchor = AudioAnchor(fields.getInt(4), fields.getLong(8))
+                }
                 if (payloadType == RTP_TYPE_RESEND_REPLY &&
                     pkt.length > RESEND_REPLY_HEADER + AudioReorderBuffer.RTP_HEADER) {
                     // bytes [4..] are the original audio RTP packet — feed it through the normal path.
@@ -133,6 +154,7 @@ class AudioStreamServer(
     }
 
     internal fun flush(firstSequence: Int?) {
+        anchor = null
         if (running) reorderBuffer.flush(firstSequence)
     }
 
@@ -167,6 +189,7 @@ class AudioStreamServer(
                     reorderBuffer.expireGap()
                     continue
                 }
+                if (peer != null && packet.address != peer) continue
                 recv++
                 if (rtpCount < 6) {
                     Logger.i("Audio RTP[$rtpCount] ${packet.length}B hdr: ${hex(packet.data, minOf(20, packet.length))}")
