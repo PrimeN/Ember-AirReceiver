@@ -28,6 +28,7 @@ class StreamingScreen @JvmOverloads constructor(
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
 ) : FrameLayout(context, attrs, defStyleAttr) {
+    internal val playbackControls = EmberPlaybackControls(context)
     private val textureView = TextureView(context).apply { isOpaque = false }
     @Volatile private var surface: Surface? = null
     private val debugView = TextView(context).apply {
@@ -70,6 +71,10 @@ class StreamingScreen @JvmOverloads constructor(
         })
         addView(decoderStatus, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.CENTER
+        })
+        addView(playbackControls, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            bottomMargin = (28 * resources.displayMetrics.density).toInt()
         })
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {

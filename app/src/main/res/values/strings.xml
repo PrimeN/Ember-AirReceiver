@@ -221,4 +221,9 @@
     <string name="mirror_decoder_unavailable">This TV could not decode the mirror stream. Disconnect and try again. If it persists, turn off Higher resolution in Settings.</string>
     <string name="protocol_state_preparing">Connecting</string>
     <string name="protocol_detail_preparing">Waiting for the first video frame</string>
+    <string name="ember_playback_play">Play</string>
+    <string name="ember_playback_pause">Pause</string>
+    <string name="ember_playback_behind">Back 10 seconds</string>
+    <string name="ember_playback_ahead">Forward 10 seconds</string>
+    <string name="ember_playback_progress">%1$s / %2$s</string>
 </resources>

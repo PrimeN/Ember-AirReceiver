@@ -54,6 +54,9 @@ internal class ServiceConnectionBinder(
 
     // The bound service — null while the Activity is not bound.
     private var service: AirReceiverService? = null
+    private var playbackObserver: kotlinx.coroutines.Job? = null
+    var urlPlayback: app.ember.airreceiver.airplay.playback.PlaybackInfo? = null
+        private set
 
     // Whether the service is currently bound.
     private var isBound = false
@@ -95,6 +98,10 @@ internal class ServiceConnectionBinder(
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            playbackObserver?.cancel()
+            playbackObserver = null
+            urlPlayback = null
+            onStateChanged()
             service = null
             isBound = false
             Logger.d("AirReceiverActivity: unbound from AirReceiverService")
@@ -119,6 +126,9 @@ internal class ServiceConnectionBinder(
      * stay referenced by the service, otherwise the decoder writes into a dead buffer.
      */
     fun unbind() {
+        playbackObserver?.cancel()
+        playbackObserver = null
+        urlPlayback = null
         service?.setVideoSurfaceProvider { null }
         if (isBound) {
             context.unbindService(serviceConnection)
@@ -148,6 +158,10 @@ internal class ServiceConnectionBinder(
         service?.sendDlnaRemoteCommand(command)
     }
 
+    fun setUrlRate(rate: Float) = service?.setAirPlayUrlRate(rate)
+    fun seekUrl(seconds: Double) = service?.seekAirPlayUrl(seconds)
+    fun stopUrl() = service?.stopAirPlayUrl()
+
     /**
      * Collects the five state flows the streaming overlay depends on.
      *
@@ -156,6 +170,16 @@ internal class ServiceConnectionBinder(
      */
     private fun observeState() {
         val svc = service ?: return
+        playbackObserver?.cancel()
+        playbackObserver = scope.launch {
+            svc.airPlayUrlPlayback.collectLatest { info ->
+                urlPlayback = info?.takeIf {
+                    it.phase != app.ember.airreceiver.airplay.playback.PlaybackPhase.ENDED &&
+                        it.phase != app.ember.airreceiver.airplay.playback.PlaybackPhase.FAILED
+                }
+                onStateChanged()
+            }
+        }
         scope.launch {
             svc.airPlayState.collectLatest { state ->
                 airPlayState = state

@@ -306,6 +306,12 @@ class AirReceiverActivity : AppCompatActivity() {
      * stream is showing — so the remote can play/pause/skip what the Mac/iPhone is streaming. Returns
      * false for other keys so normal navigation is unaffected.
      */
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (::streamingScreen.isInitialized && streamingScreen.visibility == View.VISIBLE &&
+            binder.urlPlayback != null && streamingScreen.playbackControls.handleRemote(event)) return true
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
         val overlayActive = binder.nowPlaying != null ||
             binder.airPlayState == ProtocolState.CONNECTED ||
@@ -372,6 +378,11 @@ class AirReceiverActivity : AppCompatActivity() {
      * Called by the [ServiceConnectionBinder] after every mirrored state change.
      */
     private fun updateOverlay() {
+        val controls = streamingScreen.playbackControls
+        controls.setPlayback(binder.urlPlayback)
+        controls.onRate = { binder.setUrlRate(it) }
+        controls.onSeek = { binder.seekUrl(it) }
+        controls.onStop = { binder.stopUrl() }
         val photoFrame = binder.photoFrame
         val nowPlaying = binder.nowPlaying
         val pin = binder.pairingPin
