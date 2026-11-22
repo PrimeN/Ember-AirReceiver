@@ -28,8 +28,8 @@ import kotlinx.coroutines.launch
  *   • Receive thread: socket.receive → dedup by RTP sequence → enqueue. Never blocks on playback,
  *     so the UDP socket is always drained promptly. (A blocking AudioTrack.write on the receive
  *     thread stalls the socket drain, which destabilises the whole mirror session.)
- *   • Playback thread: dequeue → decrypt → decode → AudioTrack.write(BLOCKING). Blocking here only
- *     paces playback to the audio clock and drops no PCM; it cannot stall the network.
+ *   • Playback thread: dequeue → decrypt → decode → AudioTrack. Playback follows presentation
+ *     deadlines independently of the network thread.
  *
  * The three parts live in three focused classes:
  *   • this class          — the sockets, the three threads and the public API of the server
@@ -77,12 +77,13 @@ class AudioStreamServer(
     // RTP ordering, duplicate suppression and packet-loss retransmit.
     private val reorderBuffer = AudioReorderBuffer(frameQueue, SocketControlChannel())
 
-    private data class AudioAnchor(val rtpTime: Int, val ntpTime: Long)
+    private data class AudioAnchor(val rtpTime: Int, val ntpTime: Long, val receivedNanos: Long)
     @Volatile private var anchor: AudioAnchor? = null
 
     private fun presentationNanos(rtpTime: Int): Long? {
         val current = anchor ?: return null
         val now = System.nanoTime()
+        if (now - current.receivedNanos > 10_000_000_000L) return null
         val base = timingClient?.mirrorPresentationNanos(current.ntpTime, now) ?: return null
         // Int subtraction gives the signed distance across the 32-bit sample counter rollover.
         val samples = rtpTime - current.rtpTime
@@ -111,8 +112,9 @@ class AudioStreamServer(
 
     fun start(scope: CoroutineScope) {
         running = true
+        StreamStats.resetAudio()
         StreamStats.audioActive = true
-        scope.launch(Dispatchers.IO) { playback.runPlayback() }   // decode + play (may block on AudioTrack)
+        scope.launch(Dispatchers.IO) { playback.runPlayback() }   // decode + scheduled PCM output
         scope.launch(Dispatchers.IO) { runReceive() }    // drain socket fast (never blocks on audio)
         scope.launch(Dispatchers.IO) { runControl() }    // capture sender addr + handle resend replies
     }
@@ -141,7 +143,7 @@ class AudioStreamServer(
                 val payloadType = pkt.data[1].toInt() and 0x7F
                 if (payloadType == 0x54 && pkt.length >= 20 && sampleRate > 0) {
                     val fields = ByteBuffer.wrap(pkt.data)
-                    anchor = AudioAnchor(fields.getInt(4), fields.getLong(8))
+                    anchor = AudioAnchor(fields.getInt(4), fields.getLong(8), System.nanoTime())
                 }
                 if (payloadType == RTP_TYPE_RESEND_REPLY &&
                     pkt.length > RESEND_REPLY_HEADER + AudioReorderBuffer.RTP_HEADER) {

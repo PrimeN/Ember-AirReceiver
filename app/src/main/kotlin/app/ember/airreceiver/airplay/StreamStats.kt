@@ -83,6 +83,8 @@ object StreamStats {
     }
 
     // ─── Audio (AudioStreamServer) ───────────────────────────────────────────
+    @Volatile var audioOutputDelayMs: Int? = null
+    val audioLateFrames = AtomicLong()
     @Volatile var audioActive = false  // true while an audio stream is running
     @Volatile var audioQueue = 0       // current playback-queue depth
     @Volatile var audioDupPct = 0      // % of RTP packets that were redundant duplicates
@@ -90,7 +92,15 @@ object StreamStats {
     /** Clears per-stream counters (call when a mirror session ends). Keeps [overlayEnabled]. */
     fun resetStreams() {
         resetVideo()
-        audioActive = false; audioQueue = 0; audioDupPct = 0
+        resetAudio()
+    }
+
+    fun resetAudio() {
+        audioActive = false
+        audioQueue = 0
+        audioDupPct = 0
+        audioOutputDelayMs = null
+        audioLateFrames.set(0)
     }
 
     /** A new video session must not clear an audio stream that is already running. */
@@ -121,6 +131,6 @@ object StreamStats {
             "Negotiated $videoAdvertised  Input $videoConfig  OUT ${videoWidth}x$videoHeight\n" +
             "surface $videoSurface\n" +
             "errors ${videoErrors.get()}  $videoLastError\n" +
-            "AUDIO " + (if (audioActive) "on  q $audioQueue  dup $audioDupPct%" else "off")
+            "AUDIO " + (if (audioActive) "on  q $audioQueue  dup $audioDupPct%  output ${audioOutputDelayMs ?: "—"}ms  late ${audioLateFrames.get()}" else "off")
     }
 }

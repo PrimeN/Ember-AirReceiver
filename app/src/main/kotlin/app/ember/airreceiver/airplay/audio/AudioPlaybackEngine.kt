@@ -12,11 +12,13 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import app.ember.airreceiver.airplay.StreamStats
 import app.ember.airreceiver.airplay.pairing.MirrorCrypto
 import app.ember.airreceiver.util.Logger
 import java.nio.ByteBuffer
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.LockSupport
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -95,15 +97,10 @@ internal class AudioPlaybackEngine(
                 val payload = frameQueue.poll(200, TimeUnit.MILLISECONDS) ?: continue
                 try {
                     if (payload === AudioReorderBuffer.FLUSH) {
-                        // Keep codec and output resets on their playback owner thread.
-                        audioTrack?.pause()
-                        try {
-                            audioTrack?.flush()
-                        } finally {
-                            codec?.flush()
-                        }
-                        writtenBytes = 0
-                        audioTrack?.play()
+                        // A fresh track starts a new playback-head epoch for the new RTP timeline.
+                        releaseAudioTrack()
+                        codec?.flush()
+                        StreamStats.audioOutputDelayMs = null
                         continue
                     }
                     val decrypted = decryptPacket(payload.payload)
@@ -262,43 +259,64 @@ internal class AudioPlaybackEngine(
         if (Build.VERSION.SDK_INT >= 29) isSoftwareOnly
         else name.startsWith("c2.android.") || name.startsWith("OMX.google.")
 
-    /** Finish partial writes and recreate a dead output once on the playback thread. */
+    /** Pace the output in short steps so FLUSH can preempt delayed and partially written PCM. */
     private fun writePcm(pcm: ByteArray, ptsUs: Long) {
-        if (!focus.acquire()) return
-        val initialTrack = audioTrack ?: initAudioTrack()
-        if (ptsUs > 0L) {
-            val now = System.nanoTime()
-            val queuedNs = if (initialTrack.getTimestamp(outputTimestamp)) {
-                val outstanding = writtenBytes / (outputChannels * 2) - outputTimestamp.framePosition
-                (outstanding * 1_000_000_000L / outputSampleRate + outputTimestamp.nanoTime - now)
-                    .coerceIn(0L, 250_000_000L)
-            } else 0L
-            val waitNs = ptsUs * 1000L - now - queuedNs
-            if (waitNs in -3_000_000_000L..-150_000_000L) return
-            // A bad or stale sender clock must not hold the realtime playback thread.
-            if (waitNs in 1_000_000L..500_000_000L) Thread.sleep((waitNs / 1_000_000L).coerceAtMost(60))
-        }
+        if (!writingAllowed() || !focus.acquire()) return
+        var track = audioTrack ?: initAudioTrack()
+        if (!awaitPresentation(track, ptsUs * 1000L)) return
+
         var offset = 0
         var retried = false
-        while (offset < pcm.size && isRunning()) {
-            val track = audioTrack ?: initAudioTrack()
-            val written = track.write(pcm, offset, pcm.size - offset, AudioTrack.WRITE_BLOCKING)
+        var lastProgress = System.nanoTime()
+        while (offset < pcm.size && writingAllowed() && focus.acquire()) {
+            val written = track.write(pcm, offset, pcm.size - offset, AudioTrack.WRITE_NON_BLOCKING)
             when {
                 written > 0 -> {
                     offset += written
                     writtenBytes += written
+                    lastProgress = System.nanoTime()
                 }
+                written == 0 && System.nanoTime() - lastProgress < 120_000_000L ->
+                    LockSupport.parkNanos(2_000_000L)
                 written == AudioTrack.ERROR_DEAD_OBJECT && !retried -> {
                     releaseAudioTrack()
+                    track = initAudioTrack()
                     retried = true
+                    lastProgress = System.nanoTime()
                 }
                 else -> {
-                    if (written == AudioTrack.ERROR_DEAD_OBJECT) releaseAudioTrack()
-                    if (written < 0) Logger.w("AudioTrack write failed: $written")
+                    releaseAudioTrack()
+                    Logger.w("Audio output stopped accepting PCM ($written)")
                     return
                 }
             }
         }
+    }
+
+    private fun writingAllowed(): Boolean =
+        isRunning() && frameQueue.peek() !== AudioReorderBuffer.FLUSH
+
+    private fun awaitPresentation(track: AudioTrack, ptsNanos: Long): Boolean {
+        while (writingAllowed() && focus.acquire()) {
+            val now = System.nanoTime()
+            val timestamp = writtenBytes > 0 && runCatching { track.getTimestamp(outputTimestamp) }.getOrDefault(false)
+            val queued = AudioPlayout.queuedNanos(
+                writtenBytes / (outputChannels * 2), outputSampleRate, now,
+                if (timestamp) outputTimestamp.framePosition else null,
+                if (timestamp) outputTimestamp.nanoTime else null,
+                track.playbackHeadPosition
+            )
+            StreamStats.audioOutputDelayMs = (queued / 1_000_000L).toInt()
+            when (val wait = AudioPlayout.waitNanos(ptsNanos, now, queued)) {
+                AudioPlayout.DROP_FRAME -> {
+                    StreamStats.audioLateFrames.incrementAndGet()
+                    return false
+                }
+                0L -> return true
+                else -> LockSupport.parkNanos(wait)
+            }
+        }
+        return false
     }
 
     private fun releaseAudioTrack() {
