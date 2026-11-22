@@ -111,6 +111,7 @@ class MiracastReceiver(
         Logger.i("MiracastReceiver stopping")
         groupListener?.let { runCatching { context.unregisterReceiver(it) } }
         groupListener = null
+        if (wfdRegistered) publishDisplayRole(false)
         // Each step is released on its own so a failing P2P call cannot keep the WFD RTSP
         // server bound or the P2P channel open.
         try {
@@ -193,6 +194,25 @@ class MiracastReceiver(
         isAdvertising = false
     }
 
+    private var wfdRegistered = false
+
+    private fun publishDisplayRole(enable: Boolean) {
+        if (Build.VERSION.SDK_INT < 34 || context.checkSelfPermission(
+                android.Manifest.permission.CONFIGURE_WIFI_DISPLAY) != PackageManager.PERMISSION_GRANTED) return
+        val activeChannel = channel ?: return
+        val info = android.net.wifi.p2p.WifiP2pWfdInfo().apply {
+            isEnabled = enable
+            setDeviceType(android.net.wifi.p2p.WifiP2pWfdInfo.DEVICE_TYPE_PRIMARY_SINK)
+            isSessionAvailable = enable
+            controlPort = WFD_RTSP_PORT
+            maxThroughput = 50
+        }
+        wifiP2pManager?.setWfdInfo(activeChannel, info, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() { wfdRegistered = enable }
+            override fun onFailure(reason: Int) { Logger.w("Wireless display role unavailable ($reason)") }
+        })
+    }
+
     private fun monitorGroup(manager: WifiP2pManager, channel: Channel) {
         fun refresh() {
             if (!job.isActive) return
@@ -203,6 +223,7 @@ class MiracastReceiver(
                 }
                 manager.requestGroupInfo(channel) { group ->
                     if (group == null || !job.isActive) return@requestGroupInfo
+                    rtspServer.setGroupInterface(if (info.isGroupOwner) info.groupOwnerAddress else null)
                     val source = if (info.isGroupOwner) group.clientList.firstOrNull() else group.owner
                     val address = if (!info.isGroupOwner) info.groupOwnerAddress
                         else if (Build.VERSION.SDK_INT >= 35) source?.ipAddress else null
@@ -266,6 +287,8 @@ class MiracastReceiver(
                         serviceInfo = localService
                         isAdvertising = true
                         rtspServer.start(scope)
+                        runCatching { publishDisplayRole(true) }
+                            .onFailure { Logger.w("Platform display role unavailable") }
                         runCatching { monitorGroup(manager, activeChannel) }
                             .onFailure { Logger.w("Mirror group updates unavailable") }
                         Logger.i("Miracast WFD P2P service advertised")

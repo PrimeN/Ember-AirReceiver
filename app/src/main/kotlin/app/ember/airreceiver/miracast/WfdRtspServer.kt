@@ -52,6 +52,7 @@ internal class WfdRtspServer(
     @Volatile private var running = false
     @Volatile private var serverSocket: ServerSocket? = null
     @Volatile private var activeClient: Socket? = null
+    @Volatile private var groupInterface: InetAddress? = null
     private var currentCSeq = 0
     @Volatile private var media: WfdMedia? = null
 
@@ -98,15 +99,24 @@ internal class WfdRtspServer(
         }
     }
 
-    fun disconnect() { runCatching { activeClient?.close() } }
+    fun setGroupInterface(address: InetAddress?) {
+        groupInterface = address
+    }
+
+    fun disconnect() {
+        groupInterface = null
+        runCatching { activeClient?.close() }
+    }
 
     private fun runServer(scope: CoroutineScope) {
         try {
-            serverSocket = ServerSocket(MiracastReceiver.WFD_RTSP_PORT)
+            val listener = ServerSocket(MiracastReceiver.WFD_RTSP_PORT)
+            serverSocket = listener
+            if (!running) { listener.close(); return }
             Logger.i("WFD RTSP server listening on port ${MiracastReceiver.WFD_RTSP_PORT}")
             while (running && scope.isActive) {
-                val client = serverSocket!!.accept()
-                if (!claim(client)) {
+                val client = listener.accept()
+                if (client.localAddress != groupInterface || !claim(client)) {
                     sendServiceUnavailable(client)
                     client.close()
                     continue
@@ -130,6 +140,7 @@ internal class WfdRtspServer(
             var setupSequence = -1
             var playSequence = -1
             var playing = false
+            var inboundSetup = false
             var session = ""
             var presentation = "rtsp://${socket.inetAddress.hostAddress}/wfd1.0/streamid=0"
             fun command(method: String, uri: String, extra: String = ""): Int {
@@ -159,10 +170,14 @@ internal class WfdRtspServer(
                     } else if (currentCSeq == playSequence) startMedia()
                     continue
                 }
-                val response = routeRequest(request)
+                val response = if (request.method == "PLAY" && (!inboundSetup ||
+                        header("Session")?.substringBefore(';') != WFD_SESSION_ID)) {
+                    RtspResponse(455, "Session unavailable")
+                } else routeRequest(request)
                 sendResponse(output, response)
                 when (request.method) {
                     "OPTIONS" -> command("OPTIONS", "*", "Require: org.wfa.wfd1.0\r\n")
+                    "SETUP" -> inboundSetup = response.statusCode == 200
                     "PLAY" -> if (response.statusCode == 200) startMedia()
                     "TEARDOWN" -> break
                     "SET_PARAMETER" -> {
