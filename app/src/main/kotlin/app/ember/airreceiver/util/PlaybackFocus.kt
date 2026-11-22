@@ -9,16 +9,20 @@ internal class PlaybackFocus(private val onChange: (Boolean) -> Unit = {}) {
     }
 
     @Volatile private var granted = false
+    private var needsNewRequest = false
     private var listener: AudioManager.OnAudioFocusChangeListener? = null
 
     @Synchronized
-    fun acquire(): Boolean {
+    fun acquire(explicitResume: Boolean = false): Boolean {
+        if (explicitResume && needsNewRequest) release()
         if (listener != null) return granted
         val request = object : AudioManager.OnAudioFocusChangeListener {
             override fun onAudioFocusChange(change: Int) {
                 val audible = change == AudioManager.AUDIOFOCUS_GAIN
                 synchronized(this@PlaybackFocus) {
                     if (listener !== this) return
+                    if (change == AudioManager.AUDIOFOCUS_LOSS) needsNewRequest = true
+                    if (audible && needsNewRequest) return
                     granted = audible
                 }
                 onChange(audible)
@@ -27,6 +31,7 @@ internal class PlaybackFocus(private val onChange: (Boolean) -> Unit = {}) {
         listener = request
         granted = manager.requestAudioFocus(request, AudioManager.STREAM_MUSIC,
             AudioManager.AUDIOFOCUS_GAIN) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        needsNewRequest = !granted
         return granted
     }
 
@@ -34,6 +39,7 @@ internal class PlaybackFocus(private val onChange: (Boolean) -> Unit = {}) {
     fun release() {
         val old = listener
         listener = null
+        needsNewRequest = false
         granted = false
         if (old != null) manager.abandonAudioFocus(old)
     }

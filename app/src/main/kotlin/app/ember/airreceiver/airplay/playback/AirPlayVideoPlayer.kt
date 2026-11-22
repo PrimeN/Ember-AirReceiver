@@ -123,7 +123,7 @@ class AirPlayVideoPlayer(
         if (!prepared) return
         runCatching {
             if (rate <= 0f) { if (player.isPlaying) player.pause() }
-            else { if (!player.isPlaying && focus.acquire()) player.start() }
+            else { if (!player.isPlaying && focus.acquire(explicitResume = true)) player.start() }
         }
     }
 
