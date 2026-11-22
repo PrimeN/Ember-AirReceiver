@@ -8,6 +8,8 @@ import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
 import org.bouncycastle.crypto.params.X25519PrivateKeyParameters
 import org.bouncycastle.crypto.params.X25519PublicKeyParameters
 import org.bouncycastle.crypto.signers.Ed25519Signer
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -47,6 +49,7 @@ class PairingSessionTest {
         val m1 = byteArrayOf(1, 0, 0, 0) + clientEcdhPublic + clientEdPublic
         val m1Resp = server.pairVerify(m1)
         assertEquals(96, m1Resp.size)
+        assertNull(server.verifiedControllerKey)
         val serverEcdhPublic = m1Resp.copyOfRange(0, 32)
         val encServerSig = m1Resp.copyOfRange(32, 96)
 
@@ -74,7 +77,18 @@ class PairingSessionTest {
         val encClientSig = cipher.update(clientSig)
         val m2 = byteArrayOf(0, 0, 0, 0) + encClientSig
         val m2Resp = server.pairVerify(m2)
-        assertEquals(0, m2Resp.size)   // empty body = pairing verified
+        assertEquals(0, m2Resp.size)
+        assertArrayEquals(clientEdPublic, server.verifiedControllerKey)
+
+        val otherController = Ed25519PrivateKeyParameters(seed(10), 0).generatePublicKey().encoded
+        val freshConnection = PairingSession(PairingKeys.create(serverEdSeed))
+        freshConnection.pairVerify(byteArrayOf(1, 0, 0, 0) + clientEcdhPublic + otherController)
+        assertNull(freshConnection.verifiedControllerKey)
+        assertArrayEquals(clientEdPublic, server.verifiedControllerKey)
+
+        server.resetVerification()
+        assertNull(server.verifiedControllerKey)
+        assertNull(server.sharedSecret)
     }
 
     private fun seed(b: Int) = ByteArray(32) { b.toByte() }
