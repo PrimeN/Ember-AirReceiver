@@ -187,7 +187,22 @@
                 android:textSize="18sp"
                 android:background="@drawable/btn_control_selector"
                 android:focusable="true"
-                android:nextFocusLeft="@id/btn_stop" />
+                android:nextFocusLeft="@id/btn_stop"
+                android:nextFocusRight="@id/btn_connection_help" />
+
+            <Button
+                android:id="@+id/btn_connection_help"
+                android:layout_width="wrap_content"
+                android:layout_height="56dp"
+                android:layout_marginStart="12dp"
+                android:paddingHorizontal="20dp"
+                android:text="@string/action_connection_help"
+                android:textColor="@color/ember_action_text"
+                android:textAllCaps="false"
+                android:textSize="18sp"
+                android:background="@drawable/btn_control_selector"
+                android:focusable="true"
+                android:nextFocusLeft="@id/btn_restart" />
 
         </LinearLayout>
 

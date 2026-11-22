@@ -213,4 +213,9 @@
     <string name="protocol_state_not_configured">Not configured</string>
     <string name="protocol_detail_cast_not_configured">This build needs a Cast application ID</string>
     <string name="protocol_detail_cast_firetv">Cast is unavailable on Fire TV</string>
+    <string name="action_connection_help">Connection help</string>
+    <string name="help_airplay">On iPhone or iPad, open Control Center and choose Screen Mirroring. On Mac, use Screen Mirroring in Control Center. Select %1$s. If it is missing, make sure the sender and TV are on the same local network and AirPlay is enabled in Ember.\n\nReceiver status: %2$s</string>
+    <string name="help_miracast">On Windows, press Windows + K. On an Android device that supports Miracast, open its wireless display picker. Look for Ember AirReceiver. If it is missing, enable Miracast in Ember and check that both devices support Wi-Fi Direct.\n\nReceiver status: %2$s</string>
+    <string name="help_cast">Connect the sender and TV to the same local network. Open a Cast-enabled sender that supports the configured receiver, then open its Cast picker. Look for this TV.\n\nReceiver status: %2$s</string>
+    <string name="help_dlna">Connect the sender and TV to the same local network. Open a DLNA controller, choose a media renderer, and look for %1$s. If it is missing, check that DLNA is enabled and try refreshing the device list.\n\nReceiver status: %2$s</string>
 </resources>

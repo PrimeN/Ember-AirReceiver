@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0 — see LICENSE and NOTICE.
 package app.ember.airreceiver.ui
 
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -24,6 +25,7 @@ import app.ember.airreceiver.service.AirReceiverService
 import app.ember.airreceiver.service.ProtocolState
 import app.ember.airreceiver.service.ServiceController
 import app.ember.airreceiver.service.ServiceState
+import app.ember.airreceiver.settings.SettingsRepository
 import app.ember.airreceiver.util.Logger
 import app.ember.airreceiver.util.NetworkUtils
 import kotlinx.coroutines.flow.collectLatest
@@ -77,6 +79,7 @@ class HomeFragment : Fragment() {
     private lateinit var btnStart: Button
     private lateinit var btnStop: Button
     private lateinit var btnRestart: Button
+    private var receiverName = ""
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View =
         inflater.inflate(R.layout.fragment_home, container, false)
@@ -140,6 +143,7 @@ class HomeFragment : Fragment() {
      * Calls [ServiceController] which sends Intent actions to [AirReceiverService].
      */
     private fun configureButtons() {
+        requireView().findViewById<Button>(R.id.btn_connection_help).setOnClickListener { showConnectionHelp() }
         btnStart.setOnClickListener {
             Logger.d("User tapped Start")
             ServiceController.start(requireContext())
@@ -164,8 +168,38 @@ class HomeFragment : Fragment() {
      * what to look for in their sender's picker.
      */
     private fun showDeviceName() {
-        val name = NetworkUtils.getDeviceName(requireContext())
-        textDeviceName.text = getString(R.string.home_device_visible_as, name)
+        val context = requireContext()
+        val systemName = NetworkUtils.getDeviceName(context)
+        receiverName = systemName
+        textDeviceName.text = getString(R.string.home_device_visible_as, receiverName)
+        viewLifecycleOwner.lifecycleScope.launch {
+            SettingsRepository(context).settingsFlow.collectLatest { settings ->
+                receiverName = settings.effectiveDisplayName.ifEmpty { systemName }
+                textDeviceName.text = getString(R.string.home_device_visible_as, receiverName)
+            }
+        }
+    }
+
+    private fun showConnectionHelp() {
+        val topics = listOf(
+            Triple(R.string.protocol_airplay, R.string.help_airplay, cardAirPlay),
+            Triple(R.string.protocol_miracast, R.string.help_miracast, cardMiracast),
+            Triple(R.string.protocol_cast, R.string.help_cast, cardCast),
+            Triple(R.string.protocol_dlna, R.string.help_dlna, cardDlna)
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.action_connection_help)
+            .setItems(topics.map { getString(it.first) }.toTypedArray()) { _, selected ->
+                val (title, instructions, card) = topics[selected]
+                val status = card.findViewById<TextView>(R.id.text_protocol_detail).text
+                AlertDialog.Builder(requireContext())
+                    .setTitle(title)
+                    .setMessage(getString(instructions, receiverName, status))
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     // ─── State Observation ───────────────────────────────────────────────────
