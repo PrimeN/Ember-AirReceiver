@@ -49,6 +49,8 @@ interface DlnaPlaybackController {
 
     fun onResume() = Unit
 
+    fun onRendererGain(volume: Int, muted: Boolean) = Unit
+
     /** Called when playback should pause. */
     fun onPause()
 

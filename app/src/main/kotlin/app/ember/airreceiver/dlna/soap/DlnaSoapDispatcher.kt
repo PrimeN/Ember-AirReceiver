@@ -10,6 +10,7 @@ import app.ember.airreceiver.dlna.DlnaTransportState
 import app.ember.airreceiver.dlna.gena.GenaLastChange
 import app.ember.airreceiver.util.Logger
 import kotlin.math.log10
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /**
@@ -153,8 +154,8 @@ class DlnaSoapDispatcher internal constructor(
             )
         }
 
-    private fun renderingControl(action: String, values: Map<String, String>): SoapResult {
-        return when (action) {
+    private fun renderingControl(action: String, values: Map<String, String>): SoapResult = synchronized(state) {
+        when (action) {
             "GetVolume" -> SoapResponses.ok(
                 action = action,
                 service = "RenderingControl",
@@ -163,7 +164,7 @@ class DlnaSoapDispatcher internal constructor(
             "SetVolume" -> {
                 val desired = values["DesiredVolume"]?.trim()?.toIntOrNull()
                 if (desired == null || desired !in 0..100) {
-                    return SoapResponses.fault(
+                    return@synchronized SoapResponses.fault(
                         SoapResponses.ERROR_INVALID_ARGS,
                         "Invalid DesiredVolume"
                     )
@@ -183,12 +184,21 @@ class DlnaSoapDispatcher internal constructor(
                     !desired.equals("true", ignoreCase = true) &&
                     !desired.equals("false", ignoreCase = true)
                 ) {
-                    return SoapResponses.fault(
+                    return@synchronized SoapResponses.fault(
                         SoapResponses.ERROR_INVALID_ARGS,
                         "Invalid DesiredMute"
                     )
                 }
                 state.muted = desired == "1" || desired.equals("true", ignoreCase = true)
+                publishRenderState()
+                SoapResponses.ok(action = action, service = "RenderingControl", values = emptyMap())
+            }
+            "SetVolumeDB" -> {
+                val db = values["DesiredVolume"]?.trim()?.toIntOrNull()
+                if (db == null || db !in MIN_DECIBEL..0) return@synchronized SoapResponses.fault(
+                    SoapResponses.ERROR_INVALID_ARGS, "Invalid DesiredVolume"
+                )
+                state.volume = if (db == MIN_DECIBEL) 0 else (100 * 10.0.pow(db / 2000.0)).roundToInt()
                 publishRenderState()
                 SoapResponses.ok(action = action, service = "RenderingControl", values = emptyMap())
             }
@@ -206,6 +216,7 @@ class DlnaSoapDispatcher internal constructor(
 
     /** Publishes the render state to the GENA subscribers. */
     private fun publishRenderState() {
+        playbackController.onRendererGain(state.volume, state.muted)
         onLastChange(
             "/upnp/event/RenderingControl",
             GenaLastChange.renderingControl(

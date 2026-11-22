@@ -77,7 +77,7 @@ class DlnaReceiver(
                 }
             }
         }
-    )
+    ).apply { setGain(transportState.volume / 100f) }
     @Volatile private var currentUri: String = ""
 
     /** Starts the renderer: description server first, then the SSDP advertisement. */
@@ -217,6 +217,10 @@ class DlnaReceiver(
                 onStateChanged(ProtocolState.CONNECTED)
             }
         }
+    }
+
+    override fun onRendererGain(volume: Int, muted: Boolean) {
+        mediaPlayer.setGain(if (muted) 0f else volume / 100f)
     }
 
     override fun onResume() {

@@ -49,6 +49,7 @@ class AirPlayVideoPlayer(
     private val onLoadTerminal: (Long, PlaybackPhase) -> Unit = { _, _ -> },
 ) {
     private var wantsPlayback = true
+    private var gain = 1f
     private var needsFocus = true
     private val focus = PlaybackFocus { audible ->
         synchronized(this) {
@@ -163,6 +164,7 @@ class AirPlayVideoPlayer(
         if (!audioOnly) surfaceProvider()?.let { runCatching { player.setSurface(it) } }
         val offset = startPosition.milliseconds(runCatching { player.duration }.getOrDefault(0))
         if (offset > 0) runCatching { player.seekTo(offset) }
+        runCatching { player.setVolume(gain, gain) }
         needsFocus = audioOnly || player.hasAudioTrack()
         prepared = true
         if (wantsPlayback && focusGranted()) runCatching { player.start() }
@@ -178,6 +180,13 @@ class AirPlayVideoPlayer(
             onTerminal(phase)
             onEnded()
         }
+    }
+
+    @Synchronized
+    fun setGain(value: Float) {
+        if (!value.isFinite()) return
+        gain = value.coerceIn(0f, 1f)
+        mp?.let { player -> runCatching { player.setVolume(gain, gain) } }
     }
 
     /** rate ≤ 0 pauses, > 0 resumes. */
