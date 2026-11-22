@@ -17,7 +17,29 @@ internal class WfdTransportStream : MediaDataSource() {
     private var end = 0L
     private var closed = false
 
-    fun append(bytes: ByteArray, offset: Int, count: Int) = synchronized(lock) {
+    private var lastSequence: Int? = null
+
+    /** Strip RTP framing and discard stale packets before feeding the transport stream. */
+    fun appendPacket(data: ByteArray, size: Int) {
+        if (size !in 12..data.size || (data[0].toInt() and 0xc0) != 0x80 ||
+            (data[1].toInt() and 0x7f) != 33) return
+        var offset = 12 + 4 * (data[0].toInt() and 15)
+        if (data[0].toInt() and 16 != 0) {
+            if (offset + 4 > size) return
+            val words = (data[offset + 2].toInt() and 255) * 256 + (data[offset + 3].toInt() and 255)
+            offset += 4 + 4 * words
+        }
+        val padding = if (data[0].toInt() and 32 != 0) data[size - 1].toInt() and 255 else 0
+        val count = size - offset - padding
+        if (count <= 0 || count % 188 != 0 || data[offset] != 0x47.toByte()) return
+        val sequence = (data[2].toInt() and 255) * 256 + (data[3].toInt() and 255)
+        val previous = lastSequence
+        if (previous != null && ((sequence - previous) and 65535) !in 1..32767) return
+        lastSequence = sequence
+        append(data, offset, count)
+    }
+
+    private fun append(bytes: ByteArray, offset: Int, count: Int) = synchronized(lock) {
         if (!closed) {
             val index = (end % buffer.size).toInt()
             val first = minOf(count, buffer.size - index)
@@ -69,18 +91,7 @@ internal class WfdMedia(
                     packet.length = packet.data.size
                     socket.receive(packet)
                     if (packet.address != peer) continue
-                    val data = packet.data
-                    val size = packet.length
-                    if (size < 12 || data[0].toInt() ushr 6 and 3 != 2 || data[1].toInt() and 127 != 33) continue
-                    var start = 12 + 4 * (data[0].toInt() and 15)
-                    if (data[0].toInt() and 16 != 0) {
-                        if (start + 4 > size) continue
-                        val words = (data[start+2].toInt() and 255) * 256 + (data[start+3].toInt() and 255)
-                        start += 4 + 4 * words
-                    }
-                    val padding = if (data[0].toInt() and 32 != 0) data[size-1].toInt() and 255 else 0
-                    val count = size - start - padding
-                    if (count > 0 && count % 188 == 0 && data[start] == 0x47.toByte()) stream.append(data, start, count)
+                    stream.appendPacket(packet.data, packet.length)
                 }
             } catch (e: java.io.IOException) {
                 if (!closed) failed()
@@ -96,7 +107,9 @@ internal class WfdMedia(
                     return
                 }
                 try {
-                    player = MediaPlayer().also { media ->
+                    val media = MediaPlayer()
+                    player = media
+                    media.also {
                         media.setSurface(output)
                         media.setOnInfoListener { _, what, _ ->
                             if (!closed && what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) rendered()
