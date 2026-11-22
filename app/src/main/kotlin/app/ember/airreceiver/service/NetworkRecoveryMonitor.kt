@@ -6,6 +6,7 @@ import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import app.ember.airreceiver.dlna.DlnaNetworkAddress
@@ -27,13 +28,20 @@ internal class NetworkRecoveryMonitor(
         worker = thread
         val handler = Handler(thread.looper)
         val known = mutableMapOf<Network, Set<String>>()
+        val usbNetworks = mutableSetOf<Network>()
+        var previouslyConnectedUsb = emptySet<Network>()
         var advertised = DlnaNetworkAddress.localIpv4Address()
         var previousNetwork: Network? = null
         var lostRegistration = false
         val refresh = Runnable {
             val address = DlnaNetworkAddress.localIpv4Address()
-            val network = known.entries.firstOrNull { address in it.value }?.key ?: return@Runnable
-            val changed = address != advertised || lostRegistration ||
+            val network = known.entries.firstOrNull { address in it.value }?.key
+            val connectedUsb = usbNetworks.filter { known[it]?.isNotEmpty() == true }.toSet()
+            val usbChanged = connectedUsb != previouslyConnectedUsb
+            if (usbChanged) Logger.i("USB network link count: ${connectedUsb.size}")
+            previouslyConnectedUsb = connectedUsb
+            if (network == null && !usbChanged) return@Runnable
+            val changed = usbChanged || address != advertised || lostRegistration ||
                 (previousNetwork != null && previousNetwork != network)
             previousNetwork = network
             advertised = address
@@ -52,12 +60,22 @@ internal class NetworkRecoveryMonitor(
                     schedule()
                 }
             }
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                if (Build.VERSION.SDK_INT < 31) return
+                val usb = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_USB)
+                handler.post {
+                    val changed = if (usb) usbNetworks.add(network) else usbNetworks.remove(network)
+                    if (changed) schedule()
+                }
+            }
+
             override fun onLost(network: Network) {
                 handler.post {
                     if (network == previousNetwork || known[network]?.contains(advertised) == true) {
                         lostRegistration = true
                     }
                     known.remove(network)
+                    usbNetworks.remove(network)
                     schedule()
                 }
             }
@@ -65,6 +83,9 @@ internal class NetworkRecoveryMonitor(
         val request = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+            .apply {
+                if (Build.VERSION.SDK_INT >= 31) addTransportType(NetworkCapabilities.TRANSPORT_USB)
+            }
             .build()
         try {
             manager.registerNetworkCallback(request, observer)
