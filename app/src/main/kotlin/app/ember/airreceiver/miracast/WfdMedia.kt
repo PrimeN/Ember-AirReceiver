@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Surface
 import app.ember.airreceiver.util.PlaybackFocus
+import app.ember.airreceiver.util.hasAudioTrack
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -117,7 +118,7 @@ internal class WfdMedia(
                         }
                         media.setOnPreparedListener {
                             if (!closed) {
-                                val gain = if (focus.acquire()) 1f else 0f
+                                val gain = if (it.hasAudioTrack() && focus.acquire()) 1f else 0f
                                 it.setVolume(gain, gain)
                                 it.start()
                             }

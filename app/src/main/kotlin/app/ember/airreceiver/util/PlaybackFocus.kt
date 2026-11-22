@@ -1,6 +1,7 @@
 package app.ember.airreceiver.util
 
 import android.media.AudioManager
+import android.media.MediaPlayer
 
 /** Each audible session owns a focus request from its first sample until pause or teardown. */
 internal class PlaybackFocus(private val onChange: (Boolean) -> Unit = {}) {
@@ -43,4 +44,11 @@ internal class PlaybackFocus(private val onChange: (Boolean) -> Unit = {}) {
         granted = false
         if (old != null) manager.abandonAudioFocus(old)
     }
+}
+
+/** Prepared players that report a video-only stream can play without interrupting other audio. */
+internal fun MediaPlayer.hasAudioTrack(): Boolean = try {
+    trackInfo.any { it.trackType == MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO }
+} catch (_: RuntimeException) {
+    true
 }

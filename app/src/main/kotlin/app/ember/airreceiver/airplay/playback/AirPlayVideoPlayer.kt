@@ -4,6 +4,7 @@ package app.ember.airreceiver.airplay.playback
 
 import android.media.AudioAttributes
 import app.ember.airreceiver.util.PlaybackFocus
+import app.ember.airreceiver.util.hasAudioTrack
 import android.media.MediaPlayer
 import android.view.Surface
 import app.ember.airreceiver.util.Logger
@@ -32,6 +33,7 @@ class AirPlayVideoPlayer(
     private val onEnded: () -> Unit = {},
 ) {
     private var wantsPlayback = true
+    private var needsFocus = true
     private val focus = PlaybackFocus { audible ->
         synchronized(this) {
             val player = mp
@@ -41,7 +43,7 @@ class AirPlayVideoPlayer(
             }
         }
     }
-    private fun focusGranted(): Boolean = focus.acquire()
+    private fun focusGranted(explicitResume: Boolean = false): Boolean = !needsFocus || focus.acquire(explicitResume)
 
     private var mp: MediaPlayer? = null
     @Volatile private var prepared = false
@@ -109,8 +111,9 @@ class AirPlayVideoPlayer(
         // after CONNECTED) — attach it now that prepare has completed.
         if (!audioOnly) surfaceProvider()?.let { runCatching { player.setSurface(it) } }
         if (startFraction > 0.0) runCatching { player.seekTo((startFraction * player.duration).toInt()) }
+        needsFocus = audioOnly || player.hasAudioTrack()
         prepared = true
-        if (wantsPlayback && focus.acquire()) runCatching { player.start() }
+        if (wantsPlayback && focusGranted()) runCatching { player.start() }
         Logger.i("AirPlay video: prepared dur=${runCatching { player.duration }.getOrDefault(0)}ms → playing")
     }
 
@@ -123,7 +126,7 @@ class AirPlayVideoPlayer(
         if (!prepared) return
         runCatching {
             if (rate <= 0f) { if (player.isPlaying) player.pause() }
-            else { if (!player.isPlaying && focus.acquire(explicitResume = true)) player.start() }
+            else { if (!player.isPlaying && focusGranted(explicitResume = true)) player.start() }
         }
     }
 
