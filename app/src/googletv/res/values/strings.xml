@@ -6,4 +6,6 @@
 <resources>
     <!-- Google TV users see this device label in the AirPlay picker -->
     <string name="app_name">Ember AirReceiver</string>
+    <string name="ember_load_failed">Ember could not play this media.</string>
+    <string name="ember_load_replaced">Ember ended the previous load.</string>
 </resources>
