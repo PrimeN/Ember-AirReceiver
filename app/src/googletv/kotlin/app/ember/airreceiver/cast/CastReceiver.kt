@@ -3,6 +3,8 @@
 package app.ember.airreceiver.cast
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import com.google.android.gms.cast.tv.CastReceiverContext
 import app.ember.airreceiver.BuildConfig
 import app.ember.airreceiver.service.ProtocolState
@@ -19,9 +21,14 @@ class CastReceiver(
     private val context: Context,
     private val onStateChanged: (ProtocolState) -> Unit
 ) {
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var started = false
 
     fun start() {
+        mainHandler.post { startOnMainThread() }
+    }
+
+    private fun startOnMainThread() {
         if (!isConfigured()) {
             Logger.w("Google Cast is not configured: missing Cast application ID")
             onStateChanged(ProtocolState.NOT_CONFIGURED)
@@ -48,6 +55,10 @@ class CastReceiver(
     }
 
     fun stop() {
+        mainHandler.post { stopOnMainThread() }
+    }
+
+    private fun stopOnMainThread() {
         try {
             if (started) {
                 CastReceiverContext.getInstance().stop()

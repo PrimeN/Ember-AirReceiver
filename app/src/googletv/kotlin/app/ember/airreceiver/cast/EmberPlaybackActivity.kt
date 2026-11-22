@@ -63,19 +63,28 @@ class EmberPlaybackActivity : FragmentActivity() {
                 finish()
                 return@launch
             }
-            CastReceiverContext.initInstance(applicationContext)
-            val receiver = CastReceiverContext.getInstance()
-            receiver.start()
-            manager = receiver.mediaManager.apply {
-                setSessionCompatToken(session.sessionToken)
-                setMediaLoadCommandCallback(object : MediaLoadCommandCallback() {
-                    override fun onLoad(senderId: String?, request: MediaLoadRequestData): Task<MediaLoadRequestData> =
-                        load(request)
-                })
+            try {
+                attachReceiver()
+            } catch (error: RuntimeException) {
+                Toast.makeText(this@EmberPlaybackActivity, R.string.ember_load_failed, Toast.LENGTH_LONG).show()
+                finish()
             }
-            session.isActive = true
-            if (manager?.onNewIntent(intent) != true) finish()
         }
+    }
+
+    private fun attachReceiver() {
+        CastReceiverContext.initInstance(applicationContext)
+        val receiver = CastReceiverContext.getInstance()
+        receiver.start()
+        manager = receiver.mediaManager.apply {
+            setSessionCompatToken(session.sessionToken)
+            setMediaLoadCommandCallback(object : MediaLoadCommandCallback() {
+                override fun onLoad(senderId: String?, request: MediaLoadRequestData): Task<MediaLoadRequestData> =
+                    load(request)
+            })
+        }
+        session.isActive = true
+        if (manager?.onNewIntent(intent) != true) finish()
     }
 
     override fun onNewIntent(intent: Intent) {
