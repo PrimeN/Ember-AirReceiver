@@ -147,7 +147,7 @@ class EmberPlaybackActivity : FragmentActivity() {
 
     override fun onDestroy() {
         stopPlayback()
-        manager?.setMediaLoadCommandCallback(null)
+        manager?.setMediaLoadCommandCallback(MediaLoadCommandCallback())
         manager?.setSessionCompatToken(null)
         session.release()
         super.onDestroy()
