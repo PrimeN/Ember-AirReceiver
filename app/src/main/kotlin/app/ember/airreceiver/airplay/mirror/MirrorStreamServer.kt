@@ -261,7 +261,7 @@ class MirrorStreamServer(
         StreamStats.videoRebuilds.incrementAndGet()
         val alternate = if (decoderSetupFailures >= 2) failedCodecName else activeCodecToAvoid
         val replacement = VideoDecoder(surface).apply {
-            onFrameRendered = { if (running && decoder === this) this@MirrorStreamServer.onFrameRendered() }
+            this.onFrameRendered = { if (running && decoder === this) this@MirrorStreamServer.onFrameRendered() }
             useMonotonicPresentationTime = true
             codecToAvoid = alternate
         }
