@@ -86,9 +86,7 @@ class AirReceiverServiceTest {
     private fun simulateStateChange(state: ProtocolState): ActiveConnection? {
         return when (state) {
             ProtocolState.CONNECTED   -> ActiveConnection("AirPlay Sender", Protocol.AIRPLAY)
-            ProtocolState.ADVERTISING,
-            ProtocolState.DISABLED,
-            ProtocolState.ERROR       -> null
+            else -> null
         }
     }
 

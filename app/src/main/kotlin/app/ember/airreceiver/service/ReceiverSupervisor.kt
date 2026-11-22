@@ -167,13 +167,10 @@ internal class ReceiverSupervisor(
                         // session must not pull the app to the front.
                         if (pendingHasVideo) bringToFront()
                     }
-                    ProtocolState.ADVERTISING,
-                    ProtocolState.DISABLED,
-                    ProtocolState.ERROR       -> {
+                    else -> {
                         _activeConnection.value = null
                         pendingHasVideo = false
-                        notifications.updateNotification(isRunning = state != ProtocolState.DISABLED &&
-                                                       state != ProtocolState.ERROR)
+                        notifications.updateNotification(isRunning = state == ProtocolState.ADVERTISING)
                     }
                 }
             }
@@ -225,9 +222,7 @@ internal class ReceiverSupervisor(
                         _activeConnection.value = ActiveConnection("DLNA Controller", Protocol.DLNA)
                         notifications.updateNotification(isRunning = true, streamingSenderName = "DLNA Controller")
                     }
-                    ProtocolState.ADVERTISING,
-                    ProtocolState.DISABLED,
-                    ProtocolState.ERROR -> {
+                    else -> {
                         if (_activeConnection.value?.protocol == Protocol.DLNA) {
                             _activeConnection.value = null
                         }
