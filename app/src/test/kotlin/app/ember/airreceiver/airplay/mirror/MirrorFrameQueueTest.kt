@@ -110,15 +110,19 @@ class MirrorFrameQueueTest {
 
     // ─── The producer must never block ────────────────────────────────────────
 
-    @Test
-    fun `offer never blocks while the budget is permanently exceeded`() {
+    @Test(timeout = 5_000)
+    fun `offer never waits for a consumer when the byte budget is full`() {
         val queue = MirrorFrameQueue(maxItems = 90, maxBytes = 1024L * 1024)
-        val started = System.nanoTime()
-        repeat(2000) { queue.offer(frame(512 * 1024, it)) }
-        val elapsedMs = (System.nanoTime() - started) / 1_000_000
-
-        assertTrue("offer must not block, took ${elapsedMs} ms", elapsedMs < 2000)
-        assertTrue("the budget must hold", queue.byteSize <= 1024L * 1024)
+        val item = frame(512 * 1024, 1)
+        queue.offer(item)
+        queue.offer(item)
+        repeat(2000) {
+            val result = queue.offer(item)
+            assertTrue(result.accepted)
+            assertEquals(1, result.dropped)
+        }
+        assertEquals(2, queue.size)
+        assertEquals(1024L * 1024, queue.byteSize)
     }
 
     @Test
