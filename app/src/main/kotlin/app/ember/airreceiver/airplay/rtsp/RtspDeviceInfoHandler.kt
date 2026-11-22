@@ -24,14 +24,15 @@ internal class RtspDeviceInfoHandler(
     private val context: android.content.Context,
     private val displayWidth: Int,
     private val displayHeight: Int,
-    private val pinAuthEnabled: Boolean
+    private val pinAuthEnabled: Boolean,
+    private val hevcEnabled: Boolean = false
 ) {
 
     /** GET /info — advertises receiver identity + capabilities (binary plist). */
     internal fun handleInfo(request: RtspRequest): RtspResponse = RtspResponse(
         statusCode = 200,
         statusMessage = "OK",
-        bodyBytes = InfoResponder.build(context, displayWidth, displayHeight, pinRequired = pinAuthEnabled),
+        bodyBytes = InfoResponder.build(context, displayWidth, displayHeight, pinRequired = pinAuthEnabled, hevcEnabled = hevcEnabled),
         contentType = "application/x-apple-binary-plist",
         protocol = request.responseProtocol()
     )

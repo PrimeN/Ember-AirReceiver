@@ -84,7 +84,8 @@ class MdnsService(
      * Only the `_airplay._tcp` service name is reported (not the `_raop._tcp` name,
      * which has a MAC address prefix and is not shown to users).
      */
-    private val onActualNameRegistered: (String) -> Unit = {}
+    private val onActualNameRegistered: (String) -> Unit = {},
+    private val hevcEnabled: Boolean = false
 ) {
 
     // Android's built-in mDNS manager — handles multicast registration
@@ -134,6 +135,7 @@ class MdnsService(
         context = context,
         nsdManager = nsdManager,
         tracker = tracker,
+        hevcEnabled = hevcEnabled,
         onStateChange = onStateChange,
         onActualNameRegistered = onActualNameRegistered,
         handleRegistrationFailure = { slot, gen, label, errorCode ->

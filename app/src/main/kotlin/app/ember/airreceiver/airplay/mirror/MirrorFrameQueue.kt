@@ -45,8 +45,8 @@ class MirrorFrameQueue(
     }
 
     /** A decoder configuration (SPS + PPS). Small, but it must be accounted for as well. */
-    class Config(val sps: ByteArray, val pps: ByteArray) : Item() {
-        override val sizeBytes: Int get() = sps.size + pps.size
+    class Config(val sps: ByteArray, val pps: ByteArray, val vps: ByteArray? = null) : Item() {
+        override val sizeBytes: Int get() = sps.size + pps.size + (vps?.size ?: 0)
     }
 
     /** One decoded video frame in Annex-B format. */

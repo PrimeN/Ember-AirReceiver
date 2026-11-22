@@ -143,6 +143,10 @@ class AirPlayReceiver(
     // Classic AirPlay media pipeline: video decoder, audio player, audio UDP socket.
     private val mediaPipeline = AirPlayMediaPipeline(scope, videoSurfaceProvider)
 
+    private val hevcEnabled by lazy {
+        app.ember.airreceiver.airplay.mirror.MirrorCapabilities.supportsHevc(mirrorWidth, mirrorHeight, 60)
+    }
+
     // AirPlay 2 mirroring: keys, event channel, NTP, mirror data/audio servers.
     private val mirrorSession = AirPlayMirrorSession(
         scope = scope,
@@ -152,6 +156,7 @@ class AirPlayReceiver(
         nowPlaying = nowPlaying,
         onSenderNameChanged = { name -> onSenderNameChanged(name) },
         onVideoSessionChanged = { hasVideo -> onVideoSessionChanged(hasVideo) },
+        hevcEnabled = hevcEnabled,
         onStateChanged = ::emitState,
         onVideoFailure = { reason ->
             sessionProgress.fail(reason)
@@ -263,6 +268,7 @@ class AirPlayReceiver(
     private fun startMdnsService() {
         mdnsService = MdnsService(
             context = context,
+            hevcEnabled = hevcEnabled,
             onStateChange = { state -> emitState(state) },
             onActualNameRegistered = { actualName -> onActualNameRegistered(actualName) }
         ).also { it.start(displayName.ifBlank { null }) }
@@ -274,6 +280,7 @@ class AirPlayReceiver(
             context = context,
             displayWidth = mirrorWidth,
             displayHeight = mirrorHeight,
+            hevcEnabled = hevcEnabled,
             audioEnabled = audioEnabled,
             videoSurfaceProvider = videoSurfaceProvider,
             onStreamingStarted = { session -> onStreamingStarted(session) },

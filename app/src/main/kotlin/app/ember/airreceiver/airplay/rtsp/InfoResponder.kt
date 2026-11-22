@@ -20,7 +20,7 @@ import app.ember.airreceiver.util.NetworkUtils
  */
 object InfoResponder {
 
-    fun build(context: Context, width: Int = 1920, height: Int = 1080, pinRequired: Boolean = false): ByteArray {
+    fun build(context: Context, width: Int = 1920, height: Int = 1080, pinRequired: Boolean = false, hevcEnabled: Boolean = false): ByteArray {
         val mac = NetworkUtils.getMacAddress()
         // When PIN access control is on, set the "pairing/PIN required" status bit so the sender runs
         // the SRP pair-setup flow. NOTE: exact flag semantics are sender-version-dependent — verify
@@ -29,7 +29,7 @@ object InfoResponder {
         val info = mapOf(
             "deviceID" to mac,
             "macAddress" to mac,
-            "features" to AIRPLAY_FEATURES,
+            "features" to features(hevcEnabled),
             "statusFlags" to statusFlags,
             "model" to MODEL,
             "name" to NetworkUtils.getDeviceName(context),
@@ -70,6 +70,14 @@ object InfoResponder {
             )
         )
         return PlistCodec.encode(info)
+    }
+
+    internal fun features(hevcEnabled: Boolean): Long =
+        AIRPLAY_FEATURES or (if (hevcEnabled) 1L shl 42 else 0L)
+
+    internal fun txtFeatures(hevcEnabled: Boolean): String {
+        val bits = features(hevcEnabled)
+        return String.format(java.util.Locale.ROOT, "0x%X,0x%X", bits and 0xffffffffL, bits ushr 32)
     }
 
     /** 64-bit features value; mirrors MdnsService's "0x5A7FFFF7,0x1E" (low,high 32-bit halves). */

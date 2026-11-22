@@ -40,6 +40,7 @@ class MirrorStreamServer(
     private val height: Int = 1080,
     private val maxQueueBytes: Long = DEFAULT_MAX_QUEUE_BYTES,
     private val maxQueueItems: Int = DEFAULT_MAX_QUEUE_ITEMS,
+    private val hevcEnabled: Boolean = false,
     private val onFrameRendered: () -> Unit = {},
     private val timingClient: app.ember.airreceiver.airplay.timing.AirPlayNtpClient? = null,
 ) {
@@ -53,6 +54,7 @@ class MirrorStreamServer(
     @Volatile private var decoder: VideoDecoder? = null   // owned by the decoder thread
     private var lastSps: ByteArray? = null
     private var lastPps: ByteArray? = null
+    private var lastVps: ByteArray? = null
     private var decoderSetupFailures = 0
     private var decoderUnavailable = false
     private var failedCodecName: String? = null
@@ -180,7 +182,11 @@ class MirrorStreamServer(
     private fun parseConfig(payload: ByteArray): MirrorFrameQueue.Config? {
         StreamStats.videoConfigs.incrementAndGet()
         return try {
-            parseConfigRecord(payload)
+            val hevc = payload.size >= 8 && payload.decodeToString(4, 8) == "hvc1"
+            if (hevc) {
+                require(hevcEnabled) { "HEVC was not advertised" }
+                parseHevcConfig(payload)
+            } else parseConfigRecord(payload)
         } catch (e: IllegalArgumentException) {
             StreamStats.videoError("config parse failed", e)
             Logger.w("Mirror: ignoring malformed SPS/PPS record — ${e.message}")
@@ -197,7 +203,7 @@ class MirrorStreamServer(
                 if (item == null) continue
                 StreamStats.videoQueue = queue.size
                 when (item) {
-                    is MirrorFrameQueue.Config -> configureDecoder(item.sps, item.pps)
+                    is MirrorFrameQueue.Config -> configureDecoder(item.sps, item.pps, item.vps)
                     is MirrorFrameQueue.Frame -> decodeFrame(item.annexB, item.senderTimestamp)
                 }
             }
@@ -212,17 +218,16 @@ class MirrorStreamServer(
         }
     }
 
-    private fun configureDecoder(sps: ByteArray, pps: ByteArray) {
+    private fun configureDecoder(sps: ByteArray, pps: ByteArray, vps: ByteArray?) {
         // New SPS/PPS (or first config) — cache it and (re)build against the current surface.
         val d = decoder
         val surface = awaitSurface()
-        if (d != null && d.isHealthy && sps.contentEquals(lastSps) && pps.contentEquals(lastPps) &&
-            surface === configuredSurface) return
-        if (!sps.contentEquals(lastSps) || !pps.contentEquals(lastPps)) {
-            resetDecoderRecovery()
-        }
+        val changed = !sps.contentEquals(lastSps) || !pps.contentEquals(lastPps) || !vps.contentEquals(lastVps)
+        if (d != null && d.isHealthy && !changed && surface === configuredSurface) return
+        if (changed) resetDecoderRecovery()
         lastSps = sps
         lastPps = pps
+        lastVps = vps
         rebuildDecoder(surface)
     }
 
@@ -261,7 +266,9 @@ class MirrorStreamServer(
             codecToAvoid = alternate
         }
         try {
-            replacement.initialize(sc + sps, sc + pps, width, height)
+            val vps = lastVps
+            if (vps == null) replacement.initialize(sc + sps, sc + pps, width, height)
+            else replacement.initializeHevc(sc + vps + sc + sps + sc + pps, width, height)
         } catch (e: Exception) {
             decoderSetupFailures++
             if (alternate == null) {
@@ -353,7 +360,9 @@ class MirrorStreamServer(
         var i = 0
         while (i + 3 < annexB.size) {
             if (annexB[i].toInt() == 0 && annexB[i + 1].toInt() == 0 && annexB[i + 2].toInt() == 1) {
-                if ((annexB[i + 3].toInt() and 0x1F) == 5) return true   // IDR slice
+                val header = annexB[i + 3].toInt()
+                if (lastVps == null && header and 0x1f == 5) return true
+                if (lastVps != null && (header ushr 1 and 0x3f) in 16..21) return true
                 i += 3
             } else {
                 i++
@@ -411,6 +420,44 @@ class MirrorStreamServer(
                 payload.copyOfRange(CONFIG_HEADER_BYTES, CONFIG_HEADER_BYTES + spsSize),
                 payload.copyOfRange(ppsLenOffset + 2, ppsEnd)
             )
+        }
+
+        /** Extract the decoder arrays from a HEVC visual sample entry. */
+        internal fun parseHevcConfig(payload: ByteArray): MirrorFrameQueue.Config {
+            require(payload.size in 94..65_536) { "Invalid HEVC sample description size" }
+            val bytes = java.nio.ByteBuffer.wrap(payload)
+            var box = 86 // VisualSampleEntry fields, including its outer box header
+            while (box <= payload.size - 8) {
+                val size = bytes.getInt(box)
+                require(size in 8..(payload.size - box)) { "Invalid HEVC child box" }
+                if (payload.decodeToString(box + 4, box + 8) == "hvcC") {
+                    val end = box + size
+                    val start = box + 8
+                    require(end - start >= 23 && payload[start] == 1.toByte()) { "Invalid HEVC decoder record" }
+                    require(payload[start + 21].toInt() and 3 == 3) { "Unsupported HEVC NAL length" }
+                    val arrays = payload[start + 22].toInt() and 0xff
+                    var offset = start + 23
+                    val sets = mutableMapOf<Int, ByteArray>()
+                    repeat(arrays) {
+                        require(offset + 3 <= end) { "Truncated HEVC array" }
+                        val type = payload[offset].toInt() and 0x3f
+                        val count = u16(payload, offset + 1)
+                        offset += 3
+                        repeat(count) {
+                            require(offset + 2 <= end) { "Truncated HEVC NAL length" }
+                            val length = u16(payload, offset)
+                            offset += 2
+                            require(length in 2..(end - offset)) { "Invalid HEVC NAL size" }
+                            if (type in 32..34 && type !in sets) sets[type] = payload.copyOfRange(offset, offset + length)
+                            offset += length
+                        }
+                    }
+                    require(sets.keys.containsAll(listOf(32, 33, 34))) { "Missing HEVC parameter sets" }
+                    return MirrorFrameQueue.Config(sets.getValue(33), sets.getValue(34), sets.getValue(32))
+                }
+                box += size
+            }
+            throw IllegalArgumentException("Missing HEVC decoder record")
         }
 
         private fun u16(b: ByteArray, offset: Int): Int =

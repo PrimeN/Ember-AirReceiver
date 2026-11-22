@@ -56,7 +56,8 @@ internal class AirPlayMirrorSession(
     private val onVideoSessionChanged: (hasVideo: Boolean) -> Unit,
     /** Publishes the protocol state of the session. */
     private val onStateChanged: (ProtocolState) -> Unit,
-    private val onVideoFailure: (String) -> Unit = {}
+    private val onVideoFailure: (String) -> Unit = {},
+    private val hevcEnabled: Boolean = false
 ) {
 
     // AirPlay 2 mirroring: data stream server + event channel + keys (set during SETUP).
@@ -127,7 +128,7 @@ internal class AirPlayMirrorSession(
         val generation = ++videoGeneration
         val server = MirrorStreamServer(
             aesKey, ecdhSecret, streamConnectionId, videoSurfaceProvider, mirrorWidth, mirrorHeight,
-            onFrameRendered = { reportFirstFrame(generation) }, timingClient = ntpClient
+            hevcEnabled = hevcEnabled, onFrameRendered = { reportFirstFrame(generation) }, timingClient = ntpClient
         )
         mirrorServer = server
         nowPlaying.videoPlaying = true

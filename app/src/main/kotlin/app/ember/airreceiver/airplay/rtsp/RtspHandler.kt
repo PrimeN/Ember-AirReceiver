@@ -78,6 +78,7 @@ open class RtspHandler(
     /** Sender's DACP reverse-control identity from RTSP headers (DACP-ID + Active-Remote token). */
     private val onRemoteControlInfo: (dacpId: String?, activeRemote: String?) -> Unit = { _, _ -> },
     /** When true, require HomeKit-style SRP PIN pairing before streaming (gated by AppSettings). */
+    private val hevcEnabled: Boolean = false,
     private val pinAuthEnabled: Boolean = false,
     /** Persistent store of paired controllers' Ed25519 keys (for pair-verify). */
     private val pairingStore: app.ember.airreceiver.airplay.pairing.PairingStore? = null,
@@ -153,6 +154,7 @@ open class RtspHandler(
             context = context,
             displayWidth = displayWidth,
             displayHeight = displayHeight,
+            hevcEnabled = hevcEnabled,
             pinAuthEnabled = pinAuthEnabled
         )
     }
