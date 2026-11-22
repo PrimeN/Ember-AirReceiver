@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import app.ember.airreceiver.BuildConfig
 import app.ember.airreceiver.AirReceiverActivity
 import app.ember.airreceiver.R
 import app.ember.airreceiver.service.AirReceiverService
@@ -222,12 +223,23 @@ class HomeFragment : Fragment() {
         val detail = card.findViewById<TextView>(R.id.text_protocol_detail)
 
         val (stateRes, colorRes, detailRes) = when (state) {
-            ProtocolState.DISABLED    -> Triple(R.string.protocol_state_disabled,    R.color.status_disabled,  disabledDetailRes())
+            ProtocolState.DISABLED -> Triple(
+                R.string.protocol_state_disabled, R.color.status_disabled,
+                if (card == cardCast && BuildConfig.FLAVOR == "firetv") {
+                    R.string.protocol_detail_cast_firetv
+                } else {
+                    disabledDetailRes()
+                }
+            )
             ProtocolState.ADVERTISING -> Triple(R.string.protocol_state_advertising, R.color.status_running,   R.string.protocol_detail_waiting)
             ProtocolState.CONNECTED   -> Triple(R.string.protocol_state_connected,   R.color.status_running,   R.string.protocol_detail_connected)
             ProtocolState.PERMISSION_REQUIRED -> Triple(
                 R.string.protocol_state_permission_required, R.color.status_stopped,
                 R.string.protocol_detail_miracast_permission
+            )
+            ProtocolState.NOT_CONFIGURED -> Triple(
+                R.string.protocol_state_not_configured, R.color.status_disabled,
+                R.string.protocol_detail_cast_not_configured
             )
             ProtocolState.ERROR       -> Triple(R.string.protocol_state_error,       R.color.status_stopped,   R.string.protocol_detail_error)
         }

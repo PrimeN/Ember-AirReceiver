@@ -22,3 +22,5 @@ Use JDK 17, Android SDK 35, NDK 28.2.13676358, and CMake 3.22.1.
 ```
 
 The APKs are under `app/build/outputs/apk/`.
+
+Google TV builds support Cast Connect when built with a registered Cast application ID. Supply it with the `AIRRECEIVER_CAST_APP_ID` environment variable or the `airreceiver.castAppId` Gradle property. The standard CI APKs omit this configuration. Cast Connect is unavailable on Fire TV.

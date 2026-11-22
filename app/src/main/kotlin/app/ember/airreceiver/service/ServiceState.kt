@@ -58,6 +58,9 @@ enum class ProtocolState {
     /** The user must grant a runtime permission before the receiver can start. */
     PERMISSION_REQUIRED,
 
+    /** This build requires protocol credentials before it can advertise. */
+    NOT_CONFIGURED,
+
     /** The protocol encountered an error (e.g., port already in use). */
     ERROR
 }

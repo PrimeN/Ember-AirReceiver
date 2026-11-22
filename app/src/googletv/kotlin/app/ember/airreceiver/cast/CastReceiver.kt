@@ -24,7 +24,7 @@ class CastReceiver(
     fun start() {
         if (!isConfigured()) {
             Logger.w("Google Cast is not configured: missing Cast application ID")
-            onStateChanged(ProtocolState.ERROR)
+            onStateChanged(ProtocolState.NOT_CONFIGURED)
             return
         }
 
