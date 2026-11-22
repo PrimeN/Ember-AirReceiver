@@ -31,10 +31,16 @@ internal class RtspRequestRouter(
 ) {
 
     internal fun routeRequest(request: RtspRequest): RtspResponse {
+        val path = request.uri.substringBefore("?")
+        if (!pairingHandler.isAuthorized() && !canHandleBeforeAuthorization(request.method, path)) {
+            return RtspResponse(470, "Connection Authorization Required", protocol = request.responseProtocol())
+        }
         Logger.d("RTSP ${request.method} ${request.uri}")
         // Senders attach their DACP reverse-control identity to most requests — capture it so the TV
         // remote can drive playback (DacpClient dedups, so this is cheap to call repeatedly).
-        request.headers["Active-Remote"]?.let { onRemoteControlInfo(request.headers["DACP-ID"], it) }
+        if (pairingHandler.isAuthorized()) {
+            request.headers["Active-Remote"]?.let { onRemoteControlInfo(request.headers["DACP-ID"], it) }
+        }
         return when (request.method) {
             "OPTIONS"       -> verbs.handleOptionsInternal(request)
             "ANNOUNCE"      -> verbs.handleAnnounceInternal(request)
@@ -58,6 +64,13 @@ internal class RtspRequestRouter(
             "POST"          -> routePost(request)
             else            -> verbs.handleUnknownInternal(request)
         }
+    }
+
+    private fun canHandleBeforeAuthorization(method: String, path: String): Boolean = when (method) {
+        "OPTIONS" -> true
+        "GET" -> path == "/info" || path == "/server-info"
+        "POST" -> path in setOf("/pair-setup", "/pair-setup-pin", "/pair-pin-start", "/pair-verify", "/fp-setup", "/feedback")
+        else -> false
     }
 
     /** Routes AirPlay 2 GET requests by URI path. */

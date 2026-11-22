@@ -158,10 +158,6 @@ internal class RtspServer(
         // Fresh pairing + FairPlay state for each control connection.
         pairingSession = PairingSession(PairingKeys.get(context))
         fairPlay = FairPlay()
-        // NOTE: legacyPin and pinPaired are deliberately NOT reset here. macOS runs the PIN handshake
-        // across SEPARATE TCP connections (/pair-pin-start on one, /pair-setup-pin on the next), so the
-        // PIN/verifier and the "paired" flag must survive a reconnect. They live for the receiver's
-        // lifetime — replaced by the next /pair-pin-start, set on a successful pairing.
         currentRemoteAddress = socket.inetAddress
 
         try {
@@ -205,6 +201,7 @@ internal class RtspServer(
             pairingSession = null
             fairPlay = null
             isMirrorSession = false
+            currentRemoteAddress = null
             activeStreamTypes.clear()
             setupCount = 0
             onStreamingStopped()

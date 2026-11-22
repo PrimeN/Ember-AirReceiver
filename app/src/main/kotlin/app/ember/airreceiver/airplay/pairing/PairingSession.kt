@@ -33,6 +33,9 @@ class PairingSession(private val keys: PairingKeys) {
     var sharedSecret: ByteArray? = null
         private set
 
+    internal var verifiedControllerKey: ByteArray? = null
+        private set
+
     /** POST /pair-setup → our 32-byte Ed25519 public key. */
     fun pairSetup(requestBody: ByteArray): ByteArray {
         require(requestBody.size == 32) { "pair-setup expects 32 bytes, got ${requestBody.size}" }
@@ -50,6 +53,7 @@ class PairingSession(private val keys: PairingKeys) {
     }
 
     private fun verifyM1(body: ByteArray): ByteArray {
+        resetVerification()
         require(body.size == 4 + 32 + 32) { "pair-verify M1 wrong size: ${body.size}" }
         val theirEcdh = body.copyOfRange(4, 36)
         ecdhTheirsPublic = theirEcdh
@@ -93,8 +97,16 @@ class PairingSession(private val keys: PairingKeys) {
             update(verifyMsg, 0, verifyMsg.size)
             verifySignature(clientSig)
         }
+        verifyCipher = null
         if (!ok) throw SecurityException("pair-verify signature mismatch")
+        verifiedControllerKey = theirEd.copyOf()
         return ByteArray(0)                                    // success → empty 200 OK
+    }
+
+    internal fun resetVerification() {
+        verifiedControllerKey = null
+        verifyCipher = null
+        sharedSecret = null
     }
 
     /** key/iv = SHA-512(salt ‖ ecdhSecret) truncated to 16 bytes. */

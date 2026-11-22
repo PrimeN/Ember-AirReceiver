@@ -36,7 +36,7 @@ class LegacyPairSetupPin(private val pin: String, private val accessoryEdPublic:
     private var sessionK = ByteArray(0)             // SRP session key (retained for step-3 AES exchange)
 
     /** reply = plist to return (null on bad input); complete/failed drive the PIN UI + lockout. */
-    data class Result(val reply: Map<String, Any>?, val complete: Boolean = false, val failed: Boolean = false)
+    data class Result(val reply: Map<String, Any>?, val complete: Boolean = false, val failed: Boolean = false, val controllerKey: ByteArray? = null)
 
     fun handle(plist: Map<String, Any?>): Result = when {
         plist.containsKey("epk") && plist.containsKey("authTag") -> step3(plist)
@@ -48,6 +48,7 @@ class LegacyPairSetupPin(private val pin: String, private val accessoryEdPublic:
     /** Step 1: build the verifier from (user, PIN) + a fresh salt; return salt + server public B. */
     private fun step1(plist: Map<String, Any?>): Result {
         username = (plist["user"] as? String).orEmpty()
+        sessionK = ByteArray(0)
         // 16-byte salt with a non-zero first byte so its canonical (sign-stripped) form is stable.
         salt = ByteArray(16).also { random.nextBytes(it); if (it[0].toInt() == 0) it[0] = 1 }
         val x = BigInteger(1, sha1(salt, sha1("$username:$pin".toByteArray())))    // x = H(s | H(user:pin))
@@ -64,6 +65,7 @@ class LegacyPairSetupPin(private val pin: String, private val accessoryEdPublic:
 
     /** Step 2: derive the shared secret, verify the client's PIN proof M1, return M2. */
     private fun step2(plist: Map<String, Any?>): Result {
+        if (serverPublicBytes.isEmpty()) return Result(null, failed = true)
         val aBytes = plist["pk"] as? ByteArray ?: return Result(null, failed = true)
         val clientM1 = plist["proof"] as? ByteArray ?: return Result(null, failed = true)
         val a = BigInteger(1, aBytes)
@@ -102,6 +104,7 @@ class LegacyPairSetupPin(private val pin: String, private val accessoryEdPublic:
         // Decrypt the client's key (epk‖authTag) at IV+1 — verifies the client derived the same K.
         val clientKey = aesGcm(false, aesKey, aesIv, epk + authTag)
             ?: run { Logger.w("pair-setup-pin step3: client epk auth failed"); return Result(null, failed = true) }
+        if (clientKey.size != 32) return Result(null, failed = true)
         Logger.i("pair-setup-pin step3: client key (${clientKey.size}B) verified → returning accessory key")
 
         // Encrypt our Ed25519 public key at IV+2 (the IV is a per-message counter: the client's
@@ -110,7 +113,8 @@ class LegacyPairSetupPin(private val pin: String, private val accessoryEdPublic:
         val out = aesGcm(true, aesKey, aesIv, accessoryEdPublic)!!
         return Result(
             mapOf("epk" to out.copyOf(out.size - 16), "authTag" to out.copyOfRange(out.size - 16, out.size)),
-            complete = true
+            complete = true,
+            controllerKey = clientKey
         )
     }
 

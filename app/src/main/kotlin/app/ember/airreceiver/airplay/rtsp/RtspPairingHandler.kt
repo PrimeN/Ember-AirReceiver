@@ -30,12 +30,16 @@ internal class RtspPairingHandler(
     private val onShowPin: (pin: String?) -> Unit
 ) {
 
-    // ─── Legacy AirPlay SRP PIN pairing (only used when pinAuthEnabled) ───────
-    @Volatile private var legacyPin: app.ember.airreceiver.airplay.pairing.LegacyPairSetupPin? = null
-    // True once a controller has completed SRP PIN pairing. Until then, with PIN auth on, we reject
-    // pair-verify — which is what makes macOS fall back to the /pair-pin-start + /pair-setup-pin PIN
-    // flow (an accepted pair-verify means "already trusted, no PIN needed").
-    @Volatile private var pinPaired = false
+    private data class PendingPin(
+        val peer: java.net.InetAddress,
+        val startedAt: Long,
+        val exchange: app.ember.airreceiver.airplay.pairing.LegacyPairSetupPin
+    )
+
+    private var pendingPin: PendingPin? = null
+
+    internal fun isAuthorized(): Boolean =
+        !pinAuthEnabled || pairingSession?.verifiedControllerKey?.let { pairingStore?.isTrusted(it) } == true
 
     /** The pairing context of this connection (pair-setup / pair-verify). */
     private val pairingSession: app.ember.airreceiver.airplay.pairing.PairingSession?
@@ -64,17 +68,18 @@ internal class RtspPairingHandler(
      * is never the HomeKit TLV8 variant.
      */
     internal fun handlePairVerify(request: RtspRequest): RtspResponse {
-        // PIN access control: refuse pair-verify until the controller has PIN-paired this connection.
-        // macOS responds to the rejection by starting the PIN flow (/pair-pin-start → /pair-setup-pin).
-        if (pinAuthEnabled && !pinPaired) {
-            Logger.i("pair-verify rejected — PIN pairing required first (triggers /pair-pin-start)")
-            return RtspResponse(470, "Connection Authorization Required", protocol = request.responseProtocol())
-        }
         return try {
+            val raw = request.bodyBytes
+            if (pinAuthEnabled && raw.firstOrNull() == 1.toByte() &&
+                (raw.size != 68 || pairingStore?.isTrusted(raw.copyOfRange(36, 68)) != true)) {
+                pairingSession?.resetVerification()
+                return authorizationRequired(request)
+            }
             val body = pairingSession!!.pairVerify(request.bodyBytes)
             Logger.i("pair-verify ${if (request.bodyBytes.firstOrNull()?.toInt() == 1) "M1" else "M2"} OK (returned ${body.size} bytes)")
             RtspResponse(200, "OK", bodyBytes = body, contentType = OCTET_STREAM, protocol = request.responseProtocol())
         } catch (e: Exception) {
+            pairingSession?.resetVerification()
             Logger.e("pair-verify failed", e)
             RtspResponse(470, "Connection Authorization Required", protocol = request.responseProtocol())
         }
@@ -91,17 +96,29 @@ internal class RtspPairingHandler(
             Logger.w("pair-pin-start blocked — PIN auth locked ($MAX_PAIR_ATTEMPTS failed attempts)")
             return RtspResponse(470, "Connection Authorization Required", protocol = request.responseProtocol())
         }
-        newSrpSession()
+        val peer = sessionState.currentRemoteAddress ?: return authorizationRequired(request)
+        newSrpSession(peer)
         Logger.i("pair-pin-start — PIN shown, SRP session primed")
         return RtspResponse(200, "OK", protocol = request.responseProtocol())
     }
 
     /** Generates a fresh 4-digit PIN, shows it on the TV, and primes the legacy SRP session. */
-    private fun newSrpSession() {
-        val pin = "%0${PIN_DIGITS}d".format(java.security.SecureRandom().nextInt(PIN_SPACE))
-        onShowPin(pin)
-        legacyPin = app.ember.airreceiver.airplay.pairing.LegacyPairSetupPin(pin, PairingKeys.get(context).edPublic)
+    private fun newSrpSession(peer: java.net.InetAddress): PendingPin {
+        val pin = java.security.SecureRandom().nextInt(PIN_SPACE).toString().padStart(PIN_DIGITS, '0')
+        val exchange = app.ember.airreceiver.airplay.pairing.LegacyPairSetupPin(pin, PairingKeys.get(context).edPublic)
+        return PendingPin(peer, System.nanoTime(), exchange).also {
+            pendingPin = it
+            onShowPin(pin)
+        }
     }
+
+    private fun clearPin() {
+        pendingPin = null
+        onShowPin(null)
+    }
+
+    private fun authorizationRequired(request: RtspRequest): RtspResponse =
+        RtspResponse(470, "Connection Authorization Required", protocol = request.responseProtocol())
 
     /**
      * POST /pair-setup-pin — the legacy AirPlay plist SRP exchange. Step 1 ({method,user}) returns
@@ -115,20 +132,27 @@ internal class RtspPairingHandler(
             onShowPin(null)
             return RtspResponse(470, "Connection Authorization Required", protocol = request.responseProtocol())
         }
+        val peer = sessionState.currentRemoteAddress ?: return authorizationRequired(request)
+        val pending = pendingPin
+        if (pending != null && System.nanoTime() - pending.startedAt >= PIN_TIMEOUT_NS) clearPin()
+        if (pendingPin?.peer?.let { it != peer } == true) return authorizationRequired(request)
         return try {
             val plist = PlistCodec.decode(request.bodyBytes)
-            if (legacyPin == null) newSrpSession()   // step 1 may arrive without a prior /pair-pin-start
-            val result = legacyPin!!.handle(plist)
+            val exchange = pendingPin ?: if (plist["method"] == "pin" || plist.containsKey("user")) {
+                newSrpSession(peer)
+            } else return authorizationRequired(request)
+            val result = exchange.exchange.handle(plist)
             if (result.failed) {
                 val n = pairingStore?.recordFailedAttempt() ?: 0
                 Logger.w("pair-setup-pin attempt failed ($n/$MAX_PAIR_ATTEMPTS)")
-                onShowPin(null); legacyPin = null
+                clearPin()
                 return RtspResponse(470, "Connection Authorization Required", protocol = request.responseProtocol())
             }
             if (result.complete) {
-                pairingStore?.resetFailedAttempts()   // legitimate pairing clears the lockout counter
-                pinPaired = true                       // now allow pair-verify → streaming proceeds
-                onShowPin(null); legacyPin = null
+                val store = pairingStore ?: return authorizationRequired(request)
+                store.trust(checkNotNull(result.controllerKey))
+                store.resetFailedAttempts()
+                clearPin()
                 Logger.i("PIN pairing complete — pair-verify now permitted")
             }
             RtspResponse(
@@ -139,7 +163,7 @@ internal class RtspPairingHandler(
             )
         } catch (e: Exception) {
             Logger.e("pair-setup-pin failed", e)
-            onShowPin(null); legacyPin = null
+            clearPin()
             RtspResponse(400, "Bad Request", protocol = request.responseProtocol())
         }
     }
@@ -149,6 +173,7 @@ internal class RtspPairingHandler(
         // must be 4 digits to be enterable. A 4-digit space is low-entropy, so the load-bearing
         // defense is the MAX_PAIR_ATTEMPTS lockout below (uniform random + hard attempt cap, NOT
         // length). The PIN is still uniformly random — no biased truncation.
+        private const val PIN_TIMEOUT_NS = 120_000_000_000L
         private const val PIN_DIGITS = 4
         private const val PIN_SPACE = 10_000        // 10^PIN_DIGITS
         private const val MAX_PAIR_ATTEMPTS = 10

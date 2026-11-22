@@ -20,6 +20,10 @@ class PairingStore(context: Context) {
     fun get(controllerId: String): ByteArray? =
         prefs.getString(KEY_PREFIX + controllerId, null)?.let(::unhex)
 
+    internal fun trust(key: ByteArray) = add(hex(key), key)
+
+    internal fun isTrusted(key: ByteArray): Boolean = get(hex(key))?.contentEquals(key) == true
+
     fun remove(controllerId: String) {
         prefs.edit().remove(KEY_PREFIX + controllerId).apply()
     }
