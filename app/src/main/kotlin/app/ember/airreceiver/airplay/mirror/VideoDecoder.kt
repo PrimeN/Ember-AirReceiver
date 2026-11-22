@@ -138,7 +138,14 @@ class VideoDecoder(private val outputSurface: Surface) {
             } ?: error("No alternate AVC decoder supports the stream")
             StreamStats.videoCodec = alternate.name
             MediaCodec.createByCodecName(alternate.name)
-        } ?: MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        } ?: try {
+            MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        } catch (failure: Exception) {
+            StreamStats.videoCodec = runCatching {
+                MediaCodecList(MediaCodecList.REGULAR_CODECS).findDecoderForFormat(format)
+            }.getOrNull().orEmpty()
+            throw failure
+        }
         StreamStats.videoCodec = mediaCodec!!.name
 
         // Configure the decoder:

@@ -53,6 +53,7 @@ class MirrorStreamServer(
     private var lastSps: ByteArray? = null
     private var lastPps: ByteArray? = null
     private var decoderSetupFailures = 0
+    private var decoderUnavailable = false
     private var failedCodecName: String? = null
     private var activeCodecToAvoid: String? = null
     // The Surface the current decoder was built against. The SurfaceView destroys its Surface when
@@ -228,6 +229,7 @@ class MirrorStreamServer(
         decoderSetupFailures = 0
         failedCodecName = null
         activeCodecToAvoid = null
+        decoderUnavailable = false
         StreamStats.videoDecoderUnavailable = false
     }
 
@@ -242,7 +244,7 @@ class MirrorStreamServer(
         decoder = null
         if (surface !== configuredSurface) resetDecoderRecovery()
         configuredSurface = surface
-        if (StreamStats.videoDecoderUnavailable) return
+        if (decoderUnavailable) return
         val sps = lastSps ?: return
         val pps = lastPps ?: return
         if (surface == null) {
@@ -265,6 +267,7 @@ class MirrorStreamServer(
             }
             val unavailable = decoderSetupFailures >= 3 ||
                 (decoderSetupFailures >= 2 && failedCodecName == null)
+            decoderUnavailable = unavailable
             StreamStats.videoDecoderUnavailable = unavailable
             StreamStats.videoError(if (unavailable) "decoder unavailable" else "decoder setup failed; waiting for IDR", e)
             Logger.w("Mirror: decoder setup failed (attempt $decoderSetupFailures, alternate=${alternate != null})")
@@ -287,7 +290,7 @@ class MirrorStreamServer(
         if (liveSurface !== configuredSurface) {
             Logger.i("Mirror: surface ${if (liveSurface == null) "lost" else "changed"} — re-attaching decoder")
             rebuildDecoder(liveSurface)
-        } else if (decoder == null && !StreamStats.videoDecoderUnavailable &&
+        } else if (decoder == null && !decoderUnavailable &&
             liveSurface != null && lastSps != null && isKeyframe(annexB)) {
             // A failed setup may be transient. Retry at a clean decode point on the same surface.
             rebuildDecoder(liveSurface)
