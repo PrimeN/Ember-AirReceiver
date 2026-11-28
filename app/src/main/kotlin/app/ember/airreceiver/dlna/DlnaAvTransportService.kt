@@ -65,7 +65,7 @@ internal class DlnaAvTransportService(
         return SoapResponses.ok(action = "SetAVTransportURI", service = SERVICE, values = emptyMap())
     }
 
-    private fun storeCurrent(uri: String, metadata: String) {
+    private fun storeCurrent(uri: String, metadata: String, notifyController: Boolean = true) {
         state.loadId++
         state.loadFailed = false
         state.currentUri = uri
@@ -73,7 +73,7 @@ internal class DlnaAvTransportService(
         state.metadata = DlnaMediaMetadataParser.parse(state.currentUriMetadata)
         state.transportState = DlnaTransportState.TRANSPORT_STOPPED
         state.onStopped()
-        controller.onSetTransportUri(uri)
+        if (notifyController) controller.onSetTransportUri(uri)
     }
 
     private fun setNextAvTransportUri(values: Map<String, String>): SoapResult {
@@ -244,7 +244,7 @@ internal class DlnaAvTransportService(
             val uri = state.nextUri
             val metadata = state.nextUriMetadata
             clearNext()
-            storeCurrent(uri, metadata)
+            storeCurrent(uri, metadata, notifyController = false)
             play()
             return@synchronized false
         }

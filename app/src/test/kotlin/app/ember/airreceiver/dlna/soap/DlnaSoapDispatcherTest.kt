@@ -329,6 +329,61 @@ class DlnaSoapDispatcherTest {
     }
 
     @Test
+    fun `resume retains the load and completion starts the next item once`() {
+        val loads = mutableListOf<Pair<String, Long>>()
+        var resumes = 0
+        val dispatcher = DlnaSoapDispatcher(object : DlnaPlaybackController {
+            override fun onSetTransportUri(uri: String) = Unit
+            override fun onPlay(uri: String, metadata: DlnaMediaMetadata?) = Unit
+            override fun onPause() = Unit
+            override fun onStop() = Unit
+            override fun onResume() { resumes++ }
+            override fun onPlayLoad(uri: String, metadata: DlnaMediaMetadata?, loadId: Long, positionMillis: Long) {
+                loads += uri to loadId
+            }
+        })
+        fun send(action: String, fields: String = "") = dispatcher.dispatch(
+            "/upnp/control/AVTransport", action, envelope("AVTransport", action, fields)
+        )
+        val first = "http://host/first.mp4"
+        val next = "http://host/next.mp4"
+        assertEquals(200, send("SetAVTransportURI", "<CurrentURI>$first</CurrentURI>").statusCode)
+        assertEquals(200, send("Play").statusCode)
+        assertEquals(200, send("Pause").statusCode)
+        assertEquals(200, send("Play").statusCode)
+        assertEquals(200, send("Play").statusCode)
+        assertEquals(1, resumes)
+        assertEquals(listOf(first), loads.map { it.first })
+        assertEquals(200, send("SetNextAVTransportURI", "<NextURI>$next</NextURI>").statusCode)
+        assertTrue(send("GetMediaInfo").body.contains("<NextURI>$next</NextURI>"))
+        val firstId = loads.single().second
+        dispatcher.onPlaybackTerminal(firstId, failed = false)
+        dispatcher.onPlaybackTerminal(firstId, failed = false)
+        assertEquals(listOf(first, next), loads.map { it.first })
+        assertTrue(send("GetMediaInfo").body.contains("<CurrentURI>$next</CurrentURI>"))
+    }
+
+    @Test
+    fun `volume and mute apply independent renderer gain changes`() {
+        val gain = mutableListOf<Pair<Int, Boolean>>()
+        val dispatcher = DlnaSoapDispatcher(object : DlnaPlaybackController {
+            override fun onSetTransportUri(uri: String) = Unit
+            override fun onPlay(uri: String, metadata: DlnaMediaMetadata?) = Unit
+            override fun onPause() = Unit
+            override fun onStop() = Unit
+            override fun onRendererGain(volume: Int, muted: Boolean) { gain += volume to muted }
+        })
+        fun send(action: String, fields: String) = dispatcher.dispatch(
+            "/upnp/control/RenderingControl", action, envelope("RenderingControl", action, fields)
+        )
+        assertEquals(200, send("SetVolume", "<DesiredVolume>25</DesiredVolume>").statusCode)
+        assertEquals(200, send("SetMute", "<DesiredMute>1</DesiredMute>").statusCode)
+        assertEquals(200, send("SetVolumeDB", "<DesiredVolume>-602</DesiredVolume>").statusCode)
+        assertEquals(200, send("SetMute", "<DesiredMute>0</DesiredMute>").statusCode)
+        assertEquals(listOf(25 to false, 25 to true, 50 to true, 50 to false), gain)
+    }
+
+    @Test
     fun `transport state changes are published to the event subscribers`() {
         val events = mutableListOf<Pair<String, String>>()
         val dispatcher = DlnaSoapDispatcher(onLastChange = { path, payload -> events += path to payload })

@@ -91,22 +91,25 @@ data class AppSettings(
      */
     val forceHighResolution: Boolean = false,
 
-    /**
-     * When true, accept the mirroring audio stream (type 96, AAC-ELD). EXPERIMENTAL: macOS uses
-     * realtime audio clock-sync (RTCP) that isn't fully implemented yet, which can make macOS tear
-     * the whole mirror session down after a couple of seconds — so this defaults OFF to keep video
-     * mirroring rock-solid. Turn on to experiment with audio.
-     */
     val lowBandwidthMirroring: Boolean = false,
     val airPlayAudioOnly: Boolean = false,
     val safeAreaPercent: Int = 0,
     val protectPlayback: Boolean = false,
+
+    /** Whether to accept companion audio for mirroring. */
     val mirrorAudioEnabled: Boolean = true
 ) {
 
-    /** Advertised mirroring display size: 2560×1440 when [forceHighResolution], else 1920×1080. */
-    val mirrorWidth: Int get() = when { lowBandwidthMirroring -> 1280; forceHighResolution -> 2560; else -> 1920 }
-    val mirrorHeight: Int get() = when { lowBandwidthMirroring -> 720; forceHighResolution -> 1440; else -> 1080 }
+    val mirrorWidth: Int get() = when {
+        lowBandwidthMirroring -> 1280
+        forceHighResolution -> 2560
+        else -> 1920
+    }
+    val mirrorHeight: Int get() = when {
+        lowBandwidthMirroring -> 720
+        forceHighResolution -> 1440
+        else -> 1080
+    }
 
     /**
      * Returns the validated, trimmed display name.

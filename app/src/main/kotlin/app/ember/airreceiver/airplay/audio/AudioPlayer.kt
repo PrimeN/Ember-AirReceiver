@@ -292,7 +292,7 @@ class AudioPlayer {
             .build()
 
         audioTrack!!.play()
-        audioTrack?.setVolume(gain)
+        runCatching { audioTrack?.setVolume(gain) }
         Logger.d("AudioTrack initialized: ${sampleRate}Hz, $channels ch, buffer=$bufferSize bytes")
     }
 
