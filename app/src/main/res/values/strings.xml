@@ -240,4 +240,7 @@
     <string name="setting_protect_playback">Protect active playback</string>
     <string name="setting_protect_playback_detail">Reject a different receiver request while a session is active</string>
     <string name="ember_receiver_busy">Ember is already playing another session.</string>
+    <string name="ember_safe_area">Picture safe area</string>
+    <string name="ember_safe_area_reset">Reset to full picture</string>
+    <string name="ember_safe_area_amount">%1$d%% inset</string>
 </resources>

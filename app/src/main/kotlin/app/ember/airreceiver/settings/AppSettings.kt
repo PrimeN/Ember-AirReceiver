@@ -99,6 +99,7 @@ data class AppSettings(
      */
     val lowBandwidthMirroring: Boolean = false,
     val airPlayAudioOnly: Boolean = false,
+    val safeAreaPercent: Int = 0,
     val protectPlayback: Boolean = false,
     val mirrorAudioEnabled: Boolean = true
 ) {

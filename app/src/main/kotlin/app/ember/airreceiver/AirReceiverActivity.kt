@@ -215,6 +215,11 @@ class AirReceiverActivity : AppCompatActivity() {
      */
     private fun setupOverlayScreens() {
         streamingScreen = StreamingScreen(this)
+        lifecycleScope.launch {
+            app.ember.airreceiver.settings.SettingsRepository(this@AirReceiverActivity).settingsFlow.collect { settings ->
+                streamingScreen.setSafeArea(settings.safeAreaPercent)
+            }
+        }
         photoScreen = PhotoScreen(this)
         nowPlayingScreen = NowPlayingScreen(this)
         pinScreen = PinScreen(this)

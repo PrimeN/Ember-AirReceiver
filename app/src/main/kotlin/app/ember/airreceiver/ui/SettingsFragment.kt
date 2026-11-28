@@ -257,9 +257,58 @@ class SettingsFragment : Fragment() {
             }
         }
 
+        requireView().findViewById<View>(R.id.row_safe_area).setOnClickListener { showSafeArea() }
         rowDiagnostics.setOnClickListener { openDiagnostics() }
         rowPrivacy.setOnClickListener { openPrivacyPolicy() }
         rowReset.setOnClickListener { showResetConfirmation() }
+    }
+
+    private fun showSafeArea() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            val saved = settingsRepository.settingsFlow.first().safeAreaPercent
+            val context = requireContext()
+            val density = resources.displayMetrics.density
+            val layout = android.widget.LinearLayout(context).apply { orientation = android.widget.LinearLayout.VERTICAL }
+            val preview = android.widget.FrameLayout(context).apply { setBackgroundColor(android.graphics.Color.BLACK) }
+            val border = View(context).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setStroke((3 * density).toInt().coerceAtLeast(1), context.getColor(R.color.text_primary))
+                    setColor(context.getColor(R.color.background_dark))
+                }
+            }
+            val radio = android.widget.RadioGroup(context)
+            val amounts = listOf(0, 3, 5, 8)
+            var selected = saved
+            preview.addView(border, android.widget.FrameLayout.LayoutParams(-1, -1))
+            layout.addView(preview, android.widget.LinearLayout.LayoutParams(-1, (125 * density).toInt()))
+            layout.addView(radio)
+            fun previewArea(amount: Int) {
+                val scale = 1f - amount * 0.02f
+                border.scaleX = scale
+                border.scaleY = scale
+            }
+            for (amount in amounts) {
+                val item = android.widget.RadioButton(context).apply {
+                    id = View.generateViewId()
+                    text = if (amount == 0) getString(R.string.ember_safe_area_reset)
+                    else getString(R.string.ember_safe_area_amount, amount)
+                    setOnClickListener { selected = amount; previewArea(amount) }
+                }
+                radio.addView(item)
+                if (amount == saved) radio.check(item.id)
+            }
+            previewArea(saved)
+            androidx.appcompat.app.AlertDialog.Builder(context)
+                .setTitle(R.string.ember_safe_area)
+                .setView(layout)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        settingsRepository.update { it.copy(safeAreaPercent = selected) }
+                    }
+                }
+                .show()
+        }
     }
 
     /**

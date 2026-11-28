@@ -4,6 +4,7 @@ package app.ember.airreceiver.settings
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -122,6 +123,7 @@ class SettingsRepository(private val context: Context) {
         forceHighResolution = this[Keys.FORCE_HIGH_RESOLUTION]  ?: false,
         lowBandwidthMirroring = this[Keys.LOW_BANDWIDTH] ?: false,
         airPlayAudioOnly = this[Keys.AIRPLAY_AUDIO_ONLY] ?: false,
+        safeAreaPercent = (this[Keys.SAFE_AREA_PERCENT] ?: 0).coerceIn(0, 8),
         protectPlayback = this[Keys.PROTECT_PLAYBACK] ?: false,
         mirrorAudioEnabled = this[Keys.MIRROR_AUDIO_ENABLED]    ?: true
     )
@@ -142,6 +144,7 @@ class SettingsRepository(private val context: Context) {
         this[Keys.FORCE_HIGH_RESOLUTION] = settings.forceHighResolution
         this[Keys.LOW_BANDWIDTH] = settings.lowBandwidthMirroring
         this[Keys.AIRPLAY_AUDIO_ONLY] = settings.airPlayAudioOnly
+        this[Keys.SAFE_AREA_PERCENT] = settings.safeAreaPercent.coerceIn(0, 8)
         this[Keys.PROTECT_PLAYBACK] = settings.protectPlayback
         this[Keys.MIRROR_AUDIO_ENABLED] = settings.mirrorAudioEnabled
     }
@@ -164,6 +167,7 @@ class SettingsRepository(private val context: Context) {
         val FORCE_HIGH_RESOLUTION = booleanPreferencesKey("force_high_resolution")
         val LOW_BANDWIDTH = booleanPreferencesKey("low_bandwidth")
         val AIRPLAY_AUDIO_ONLY = booleanPreferencesKey("airplay_audio_only")
+        val SAFE_AREA_PERCENT = intPreferencesKey("safe_area_percent")
         val PROTECT_PLAYBACK = booleanPreferencesKey("protect_playback")
         val MIRROR_AUDIO_ENABLED = booleanPreferencesKey("mirror_audio_enabled")
     }

@@ -117,6 +117,12 @@ class StreamingScreen @JvmOverloads constructor(
         }
     }
 
+    internal fun setSafeArea(percent: Int) {
+        val scale = 1f - percent.coerceIn(0, 8) * 0.02f
+        scaleX = scale
+        scaleY = scale
+    }
+
     fun getSurface(): Surface? = surface
 
     private fun applyAspectFit() {
