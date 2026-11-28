@@ -16,6 +16,7 @@
 <p align="center">
   <a href="#install">Install</a> ·
   <a href="#features">Features</a> ·
+  <a href="#screenshots">Screenshots</a> ·
   <a href="#build">Build</a> ·
   <a href="PRIVACY.md">Privacy</a> ·
   <a href="https://github.com/PrimeN/Ember-AirReceiver/issues">Report an issue</a>
@@ -35,6 +36,15 @@
 Mirroring and discovery depend on the sender, TV hardware and network. Protected
 AirPlay video and buffered AirPlay 2 audio are currently unsupported. Standard
 APK artifacts omit Cast Connect configuration.
+
+## Screenshots
+
+| Home | Settings |
+| --- | --- |
+| ![Ember Home showing independent AirPlay, Miracast, Cast and DLNA tiles](docs/screenshots/home.png) | ![Ember Settings showing display preferences and protocol switches](docs/screenshots/settings.png) |
+
+Captured from the Fire TV variant running in an Android TV emulator. Receiver
+availability depends on device support and permissions.
 
 ## Install
 
