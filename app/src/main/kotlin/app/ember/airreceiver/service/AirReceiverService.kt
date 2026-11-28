@@ -194,6 +194,10 @@ class AirReceiverService : Service() {
         receivers.sendAirPlayRemoteCommand(command)
     }
 
+    internal fun selectUrlTrack(session: Long, kind: app.ember.airreceiver.airplay.playback.PlaybackTrackKind, index: Int?) {
+        serviceScope.launch { receivers.selectUrlTrack(session, kind, index) }
+    }
+
     internal fun setAirPlayUrlRate(rate: Float) {
         serviceScope.launch { receivers.setAirPlayUrlRate(rate) }
     }

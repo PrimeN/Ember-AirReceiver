@@ -417,6 +417,8 @@ class AirReceiverActivity : AppCompatActivity() {
     private fun updateOverlay() {
         val controls = streamingScreen.playbackControls
         controls.setPlayback(binder.urlPlayback)
+        streamingScreen.setCaption(binder.urlPlayback?.caption)
+        controls.onTrack = { session, kind, index -> binder.selectUrlTrack(session, kind, index) }
         controls.onRate = { binder.setUrlRate(it) }
         controls.onSeek = { binder.seekUrl(it) }
         controls.onStop = { binder.stopUrl() }

@@ -91,6 +91,9 @@ internal class AirPlayUrlSession(
         urlVideoPlayer?.scrub(positionSec)
     }
 
+    internal fun selectTrack(session: Long, kind: app.ember.airreceiver.airplay.playback.PlaybackTrackKind, index: Int?) =
+        urlVideoPlayer?.selectTrack(session, kind, index)
+
     /** Returns the current playback snapshot (GET /playback-info and GET /scrub). */
     internal fun info(): PlaybackInfo? = urlVideoPlayer?.info() ?: terminal
 

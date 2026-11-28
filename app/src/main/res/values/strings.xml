@@ -231,4 +231,10 @@
     <string name="setting_low_bandwidth_detail">Request up to 720p at 30 frames per second on the next AirPlay connection</string>
     <string name="setting_airplay_audio_only">Audio-only AirPlay</string>
     <string name="setting_airplay_audio_only_detail">Receive audio without accepting video mirroring, photos, or video URLs</string>
+    <string name="ember_playback_tracks">Tracks</string>
+    <string name="ember_audio_automatic">Audio · Automatic</string>
+    <string name="ember_captions_off">Captions · Off</string>
+    <string name="ember_audio_track">Audio · %1$s</string>
+    <string name="ember_caption_track">Captions · %1$s</string>
+    <string name="ember_track_number">Track %1$d</string>
 </resources>

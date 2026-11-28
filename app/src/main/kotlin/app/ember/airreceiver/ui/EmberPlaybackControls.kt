@@ -8,14 +8,17 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import app.ember.airreceiver.R
 import app.ember.airreceiver.airplay.playback.PlaybackInfo
+import app.ember.airreceiver.airplay.playback.PlaybackTrackKind
 import app.ember.airreceiver.airplay.playback.PlaybackPhase
 import java.util.Locale
 
 internal class EmberPlaybackControls(context: Context) : LinearLayout(context) {
+    var onTrack: (Long, PlaybackTrackKind, Int?) -> Unit = { _, _, _ -> }
     var onRate: (Float) -> Unit = {}
     var onSeek: (Double) -> Unit = {}
     var onStop: () -> Unit = {}
     private var playback: PlaybackInfo? = null
+    private val tracks = button(R.string.ember_playback_tracks) { showTracks() }
     private val progress = TextView(context).apply { setTextColor(android.graphics.Color.WHITE) }
     private val back = button(R.string.ember_playback_behind) { seekBy(-10) }
     private val play = button(R.string.ember_playback_play) { togglePlayback() }
@@ -31,6 +34,7 @@ internal class EmberPlaybackControls(context: Context) : LinearLayout(context) {
             addView(back)
             addView(play)
             addView(ahead)
+            addView(tracks)
         })
         visibility = GONE
     }
@@ -41,6 +45,7 @@ internal class EmberPlaybackControls(context: Context) : LinearLayout(context) {
             visibility = GONE
             return
         }
+        tracks.visibility = if (info.tracks.isEmpty()) GONE else VISIBLE
         back.visibility = if (info.seekable) View.VISIBLE else View.GONE
         ahead.visibility = back.visibility
         play.setText(if (info.phase == PlaybackPhase.PLAYING) R.string.ember_playback_pause else R.string.ember_playback_play)
@@ -69,6 +74,36 @@ internal class EmberPlaybackControls(context: Context) : LinearLayout(context) {
             else -> return false
         }
         return true
+    }
+
+    private fun showTracks() {
+        val info = playback ?: return
+        val options = buildList {
+            for (kind in PlaybackTrackKind.entries) {
+                val matching = info.tracks.filter { it.kind == kind }
+                if (matching.isEmpty()) continue
+                val defaultLabel = if (kind == PlaybackTrackKind.AUDIO) R.string.ember_audio_automatic
+                    else R.string.ember_captions_off
+                add(Triple(context.getString(defaultLabel), kind, null))
+                matching.forEach { track ->
+                    val language = Locale.forLanguageTag(track.language).getDisplayLanguage().ifBlank {
+                        context.getString(R.string.ember_track_number, track.index + 1)
+                    }
+                    val label = if (kind == PlaybackTrackKind.AUDIO) R.string.ember_audio_track
+                        else R.string.ember_caption_track
+                    add(Triple(context.getString(label, language), kind, track.index))
+                }
+            }
+        }
+        if (options.isEmpty()) return
+        androidx.appcompat.app.AlertDialog.Builder(context)
+            .setTitle(R.string.ember_playback_tracks)
+            .setItems(options.map { it.first }.toTypedArray()) { _, which ->
+                val (_, kind, index) = options[which]
+                onTrack(info.trackSession, kind, index)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun togglePlayback() {

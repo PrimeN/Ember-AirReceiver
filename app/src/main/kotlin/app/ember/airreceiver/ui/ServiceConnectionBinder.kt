@@ -158,6 +158,9 @@ internal class ServiceConnectionBinder(
         service?.sendDlnaRemoteCommand(command)
     }
 
+    fun selectUrlTrack(session: Long, kind: app.ember.airreceiver.airplay.playback.PlaybackTrackKind, index: Int?) =
+        service?.selectUrlTrack(session, kind, index)
+
     fun setUrlRate(rate: Float) = service?.setAirPlayUrlRate(rate)
     fun seekUrl(seconds: Double) = service?.seekAirPlayUrl(seconds)
     fun stopUrl() = service?.stopAirPlayUrl()

@@ -241,6 +241,9 @@ class AirPlayReceiver(
 
     internal fun canControlSender() = dacpClient.canControl()
     internal fun urlPlayback() = urlSession.info()
+    internal fun selectUrlTrack(session: Long, kind: app.ember.airreceiver.airplay.playback.PlaybackTrackKind, index: Int?) =
+        urlSession.selectTrack(session, kind, index)
+
     internal fun urlRate(rate: Float) = urlSession.setRate(rate)
     internal fun urlSeek(seconds: Double) = urlSession.scrub(seconds)
     internal fun stopUrlPlayback() = urlSession.stopUrlVideo()

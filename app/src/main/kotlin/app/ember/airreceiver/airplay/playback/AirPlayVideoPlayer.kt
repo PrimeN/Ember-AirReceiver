@@ -19,7 +19,11 @@ data class MediaStartPosition(val fraction: Double = 0.0, val seconds: Double? =
 
 enum class PlaybackPhase { PREPARING, BUFFERING, PLAYING, PAUSED, ENDED, FAILED }
 
-/** Snapshot of URL-video playback for `GET /playback-info`. */
+enum class PlaybackTrackKind { AUDIO, CAPTIONS }
+
+data class PlaybackTrack(val index: Int, val kind: PlaybackTrackKind, val language: String)
+
+ /** Snapshot of URL-video playback for `GET /playback-info`. */
 data class PlaybackInfo(
     val durationSec: Double,
     val positionSec: Double,
@@ -28,6 +32,9 @@ data class PlaybackInfo(
     val phase: PlaybackPhase = PlaybackPhase.PREPARING,
     val bufferedUntilSec: Double? = null,
     val seekable: Boolean = false,
+    val trackSession: Long = 0,
+    val tracks: List<PlaybackTrack> = emptyList(),
+    val caption: String? = null,
 )
 
 /**
@@ -64,6 +71,10 @@ class AirPlayVideoPlayer(
 
     private var mp: MediaPlayer? = null
     private var loadId = 0L
+    private var trackSession = 0L
+    private var availableTracks = emptyList<PlaybackTrack>()
+    private var originalAudio = -1
+    private var timedText: String? = null
     @Volatile private var prepared = false
     private var startPosition = MediaStartPosition()
     private var buffering = false
@@ -104,6 +115,7 @@ class AirPlayVideoPlayer(
         release()
         wantsPlayback = true
         loadId = id
+        trackSession = trackSessions.incrementAndGet()
         this.audioOnly = audioOnly
         startPosition = position
         buffering = false
@@ -124,6 +136,9 @@ class AirPlayVideoPlayer(
             )
             if (!audioOnly) surfaceProvider()?.let { player.setSurface(it) }
             player.setOnPreparedListener { onPrepared(it) }
+            player.setOnTimedTextListener { source, text ->
+                synchronized(this) { if (source === mp) timedText = text?.text?.take(2_000) }
+            }
             player.setOnCompletionListener { complete(it, PlaybackPhase.ENDED) }
             player.setOnBufferingUpdateListener { source, percent ->
                 synchronized(this) {
@@ -166,6 +181,17 @@ class AirPlayVideoPlayer(
         if (offset > 0) runCatching { player.seekTo(offset) }
         runCatching { player.setVolume(gain, gain) }
         needsFocus = audioOnly || player.hasAudioTrack()
+        availableTracks = runCatching {
+            player.trackInfo.mapIndexedNotNull { index, track ->
+                val kind = when (track.trackType) {
+                    MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO -> PlaybackTrackKind.AUDIO
+                    MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_TIMEDTEXT -> PlaybackTrackKind.CAPTIONS
+                    else -> return@mapIndexedNotNull null
+                }
+                PlaybackTrack(index, kind, track.language.orEmpty())
+            }
+        }.getOrDefault(emptyList())
+        originalAudio = runCatching { player.getSelectedTrack(MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO) }.getOrDefault(-1)
         prepared = true
         if (wantsPlayback && focusGranted()) runCatching { player.start() }
         onReady()
@@ -213,6 +239,23 @@ class AirPlayVideoPlayer(
         }
     }
 
+    @Synchronized
+    fun selectTrack(session: Long, kind: PlaybackTrackKind, index: Int?) {
+        val player = mp ?: return
+        if (!prepared || session != trackSession) return
+        runCatching {
+            if (index != null) {
+                if (availableTracks.any { it.index == index && it.kind == kind }) player.selectTrack(index)
+            } else if (kind == PlaybackTrackKind.AUDIO) {
+                if (originalAudio >= 0) player.selectTrack(originalAudio)
+            } else {
+                val selected = player.getSelectedTrack(MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_TIMEDTEXT)
+                if (selected >= 0) player.deselectTrack(selected)
+            }
+        }
+        if (kind == PlaybackTrackKind.CAPTIONS) timedText = null
+    }
+
     /** Current playback snapshot for `/playback-info`, or null if nothing is loaded. */
     @Synchronized
     fun info(): PlaybackInfo? {
@@ -231,7 +274,8 @@ class AirPlayVideoPlayer(
             duration, pos.coerceAtLeast(0) / 1000.0, if (playing && !buffering) 1.0 else 0.0,
             readyToPlay = true, phase = phase,
             bufferedUntilSec = bufferPercent?.takeIf { dur > 0 }?.let { duration * it / 100 },
-            seekable = seekAllowed && dur > 0
+            seekable = seekAllowed && dur > 0,
+            trackSession = trackSession, tracks = availableTracks, caption = timedText
         )
     }
 
@@ -248,5 +292,11 @@ class AirPlayVideoPlayer(
         mp?.let { p -> runCatching { p.stop() }; runCatching { p.release() } }
         mp = null
         prepared = false
+        availableTracks = emptyList()
+        originalAudio = -1
+        timedText = null
+    }
+    private companion object {
+        val trackSessions = java.util.concurrent.atomic.AtomicLong()
     }
 }

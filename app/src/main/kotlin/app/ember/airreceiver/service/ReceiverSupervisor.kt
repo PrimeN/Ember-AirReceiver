@@ -279,6 +279,9 @@ internal class ReceiverSupervisor(
      */
     internal fun canControlAirPlaySender() = airPlayReceiver?.canControlSender() == true
     internal fun airPlayUrlPlayback() = airPlayReceiver?.urlPlayback()
+    internal fun selectUrlTrack(session: Long, kind: app.ember.airreceiver.airplay.playback.PlaybackTrackKind, index: Int?) =
+        airPlayReceiver?.selectUrlTrack(session, kind, index)
+
     internal fun setAirPlayUrlRate(rate: Float) = airPlayReceiver?.urlRate(rate)
     internal fun seekAirPlayUrl(seconds: Double) = airPlayReceiver?.urlSeek(seconds)
     internal fun stopAirPlayUrl() = airPlayReceiver?.stopUrlPlayback()
