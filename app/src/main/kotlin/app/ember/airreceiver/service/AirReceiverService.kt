@@ -237,6 +237,7 @@ class AirReceiverService : Service() {
      */
     private suspend fun startReceivers() {
         val settings = settingsRepository.settingsFlow.first()
+        PlaybackOwnership.enabled = settings.protectPlayback
         Logger.i(
             "Starting receivers: AirPlay=${settings.airPlayEnabled}, " +
                 "Miracast=${settings.miracastEnabled}, Cast=${settings.castEnabled}, " +

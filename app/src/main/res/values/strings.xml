@@ -237,4 +237,7 @@
     <string name="ember_audio_track">Audio · %1$s</string>
     <string name="ember_caption_track">Captions · %1$s</string>
     <string name="ember_track_number">Track %1$d</string>
+    <string name="setting_protect_playback">Protect active playback</string>
+    <string name="setting_protect_playback_detail">Reject a different receiver request while a session is active</string>
+    <string name="ember_receiver_busy">Ember is already playing another session.</string>
 </resources>

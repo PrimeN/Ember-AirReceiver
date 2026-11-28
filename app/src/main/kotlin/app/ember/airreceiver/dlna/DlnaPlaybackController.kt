@@ -47,6 +47,8 @@ interface DlnaPlaybackController {
         if (positionMillis > 0L) onSeek(positionMillis)
     }
 
+    fun admitPlayback(): Boolean = true
+
     fun onResume() = Unit
 
     fun onRendererGain(volume: Int, muted: Boolean) = Unit

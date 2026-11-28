@@ -116,8 +116,11 @@ internal class ReceiverSupervisor(
         // Whether the session that just started carries video (see onVideoSessionChanged).
         var pendingHasVideo = false
 
+        val owner = Any()
         airPlayReceiver = AirPlayReceiver(
             context = context,
+            admitPlayback = { PlaybackOwnership.acquire(owner) },
+            releasePlayback = { PlaybackOwnership.release(owner) },
             displayName = settings.effectiveDisplayName,
             mirrorWidth = settings.mirrorWidth,
             mirrorHeight = settings.mirrorHeight,
@@ -162,7 +165,7 @@ internal class ReceiverSupervisor(
                 when (state) {
                     ProtocolState.NEGOTIATING -> {
                         _photoFrame.value = null
-                        _activeConnection.value = null
+                        if (_activeConnection.value?.protocol == Protocol.AIRPLAY) _activeConnection.value = null
                         if (pendingHasVideo) bringToFront()
                     }
                     ProtocolState.CONNECTED   -> {
@@ -175,7 +178,7 @@ internal class ReceiverSupervisor(
                         if (pendingHasVideo) bringToFront()
                     }
                     else -> {
-                        _activeConnection.value = null
+                        if (_activeConnection.value?.protocol == Protocol.AIRPLAY) _activeConnection.value = null
                         pendingHasVideo = false
                         notifications.updateNotification(isRunning = state == ProtocolState.ADVERTISING)
                     }
@@ -188,8 +191,11 @@ internal class ReceiverSupervisor(
     /** Creates and starts the [MiracastReceiver]. */
     internal fun startMiracast() {
         _miracastState.value = ProtocolState.ADVERTISING
+        val owner = Any()
         miracastReceiver = MiracastReceiver(
             context = context,
+            admitPlayback = { PlaybackOwnership.acquire(owner) },
+            releasePlayback = { PlaybackOwnership.release(owner) },
             surfaceProvider = surfaceProvider,
             onStateChanged = { state ->
                 _miracastState.value = state
@@ -212,8 +218,11 @@ internal class ReceiverSupervisor(
     /** Creates and starts the [DlnaReceiver]. */
     internal fun startDlna(settings: AppSettings) {
         _dlnaState.value = ProtocolState.ADVERTISING
+        val owner = Any()
         dlnaReceiver = DlnaReceiver(
             context = context,
+            admitPlayback = { PlaybackOwnership.acquire(owner) },
+            releasePlayback = { PlaybackOwnership.release(owner) },
             displayName = settings.effectiveDisplayName,
             surfaceProvider = surfaceProvider,
             onPhotoReceived = { bytes, mimeType ->

@@ -64,6 +64,7 @@ class SettingsFragment : Fragment() {
     private lateinit var rowDlna: View
     private lateinit var rowLowBandwidth: View
     private lateinit var rowAudioOnly: View
+    private lateinit var rowProtectPlayback: View
     private lateinit var rowMirrorAudio: View
     private lateinit var rowPinAuth: View
     private lateinit var rowStartOnBoot: View
@@ -107,6 +108,7 @@ class SettingsFragment : Fragment() {
         rowDlna             = view.findViewById(R.id.row_dlna)
         rowLowBandwidth = view.findViewById(R.id.row_low_bandwidth)
         rowAudioOnly = view.findViewById(R.id.row_airplay_audio_only)
+        rowProtectPlayback = view.findViewById(R.id.row_protect_playback)
         rowMirrorAudio      = view.findViewById(R.id.row_mirror_audio)
         rowPinAuth          = view.findViewById(R.id.row_pin_auth)
         rowStartOnBoot      = view.findViewById(R.id.row_start_on_boot)
@@ -136,6 +138,7 @@ class SettingsFragment : Fragment() {
         configureToggleRow(rowDlna,         R.string.setting_dlna_enabled,       R.string.setting_dlna_subtitle)
         configureToggleRow(rowLowBandwidth, R.string.setting_low_bandwidth, R.string.setting_low_bandwidth_detail)
         configureToggleRow(rowAudioOnly, R.string.setting_airplay_audio_only, R.string.setting_airplay_audio_only_detail)
+        configureToggleRow(rowProtectPlayback, R.string.setting_protect_playback, R.string.setting_protect_playback_detail)
         configureToggleRow(rowMirrorAudio,  R.string.setting_mirror_audio,       R.string.setting_mirror_audio_subtitle)
         configureToggleRow(rowPinAuth,      R.string.setting_pin_auth,           R.string.setting_pin_auth_subtitle)
         configureToggleRow(rowStartOnBoot,  R.string.setting_start_on_boot,      0)
@@ -188,6 +191,7 @@ class SettingsFragment : Fragment() {
         setToggle(rowDlna,         settings.dlnaEnabled)
         setToggle(rowLowBandwidth, settings.lowBandwidthMirroring)
         setToggle(rowAudioOnly, settings.airPlayAudioOnly)
+        setToggle(rowProtectPlayback, settings.protectPlayback)
         setToggle(rowMirrorAudio,  settings.mirrorAudioEnabled)
         setToggle(rowPinAuth,      settings.airPlayPinAuthEnabled)
         setToggle(rowStartOnBoot,  settings.startOnBoot)
@@ -230,6 +234,7 @@ class SettingsFragment : Fragment() {
         setToggleListener(rowDlna)         { enabled -> saveAndRestart { it.copy(dlnaEnabled = enabled) } }
         setToggleListener(rowLowBandwidth) { enabled -> saveAndRestart { it.copy(lowBandwidthMirroring = enabled) } }
         setToggleListener(rowAudioOnly) { enabled -> saveAndRestart { it.copy(airPlayAudioOnly = enabled) } }
+        setToggleListener(rowProtectPlayback) { enabled -> saveAndRestart { it.copy(protectPlayback = enabled) } }
         setToggleListener(rowMirrorAudio)  { enabled -> saveAndRestart { it.copy(mirrorAudioEnabled = enabled) } }
         setToggleListener(rowPinAuth)      { enabled -> saveAndRestart { it.copy(airPlayPinAuthEnabled = enabled) } }
         setToggleListener(rowStartOnBoot)  { enabled -> save { it.copy(startOnBoot = enabled) } }

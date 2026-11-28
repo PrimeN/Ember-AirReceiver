@@ -40,6 +40,8 @@ import kotlinx.coroutines.launch
  *   receiver.start()
  */
 class DlnaReceiver(
+    admitPlayback: () -> Boolean = { true },
+    private val releasePlayback: () -> Unit = {},
     private val context: Context,
     private val displayName: String,
     private val surfaceProvider: () -> Surface?,
@@ -62,6 +64,7 @@ class DlnaReceiver(
     /** The address the running description server advertises. */
     @Volatile private var advertisedHost: String = ""
 
+    private val playbackAdmission = admitPlayback
     private val transportState = DlnaTransportState()
     @Volatile private var currentLoad = 0L
     private var imageJob: kotlinx.coroutines.Job? = null
@@ -72,6 +75,7 @@ class DlnaReceiver(
                 val failed = phase == app.ember.airreceiver.airplay.playback.PlaybackPhase.FAILED
                 synchronized(transportState) {
                     if (descriptionServer?.onPlaybackTerminal(id, failed) == true) {
+                        releasePlayback()
                         onStateChanged(if (failed) ProtocolState.ERROR else ProtocolState.ADVERTISING)
                     }
                 }
@@ -178,8 +182,11 @@ class DlnaReceiver(
         descriptionServer = null
         advertisedHost = ""
         job.cancel()
+        releasePlayback()
         onStateChanged(ProtocolState.DISABLED)
     }
+
+    override fun admitPlayback(): Boolean = playbackAdmission()
 
     override fun onSetTransportUri(uri: String) {
         onStop()
@@ -237,6 +244,7 @@ class DlnaReceiver(
         imageJob = null
         mediaPlayer.release()
         onPhotoCleared()
+        releasePlayback()
         onStateChanged(ProtocolState.ADVERTISING)
     }
 
@@ -300,7 +308,10 @@ class DlnaReceiver(
     }
 
     private fun failImage(loadId: Long) = synchronized(transportState) {
-        if (descriptionServer?.onPlaybackTerminal(loadId, true) == true) onStateChanged(ProtocolState.ERROR)
+        if (descriptionServer?.onPlaybackTerminal(loadId, true) == true) {
+            releasePlayback()
+            onStateChanged(ProtocolState.ERROR)
+        }
     }
 
     /**

@@ -13,6 +13,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import app.ember.airreceiver.R
 import app.ember.airreceiver.service.EmberMediaSession
+import app.ember.airreceiver.service.PlaybackOwnership
 import app.ember.airreceiver.settings.SettingsRepository
 import app.ember.airreceiver.util.FetchableUrlPolicy
 import com.google.android.gms.cast.MediaLoadRequestData
@@ -101,7 +102,10 @@ class EmberPlaybackActivity : FragmentActivity() {
         if (url == null || !FetchableUrlPolicy.isFetchable(url)) {
             return Tasks.forException(IllegalArgumentException(getString(R.string.ember_load_failed)))
         }
-        stopPlayback()
+        if (!PlaybackOwnership.acquire(this)) {
+            return Tasks.forException(IllegalStateException(getString(R.string.ember_receiver_busy)))
+        }
+        stopPlayback(releaseOwnership = false)
         val result = TaskCompletionSource<MediaLoadRequestData>()
         pending = result
         val view = VideoView(this)
@@ -130,6 +134,7 @@ class EmberPlaybackActivity : FragmentActivity() {
                 val message = getString(R.string.ember_load_failed)
                 result.trySetException(IllegalStateException(message))
                 pending = null
+                PlaybackOwnership.release(this)
                 EmberMediaSession.externalPlaybackActive = false
                 publish(PlaybackStateCompat.STATE_ERROR)
                 Toast.makeText(this, message, Toast.LENGTH_LONG).show()
@@ -148,7 +153,8 @@ class EmberPlaybackActivity : FragmentActivity() {
         manager?.broadcastMediaStatus()
     }
 
-    private fun stopPlayback() {
+    private fun stopPlayback(releaseOwnership: Boolean = true) {
+        if (releaseOwnership) PlaybackOwnership.release(this)
         EmberMediaSession.externalPlaybackActive = false
         pending?.trySetException(IllegalStateException(getString(R.string.ember_load_replaced)))
         pending = null

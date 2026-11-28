@@ -42,6 +42,8 @@ internal class WfdRtspServer(
     private val onSessionStarted: () -> Unit,
     private val onSessionStopped: () -> Unit,
     private val surface: () -> Surface? = { null },
+    private val admitPlayback: () -> Boolean = { true },
+    private val releasePlayback: () -> Unit = {},
     private val onPreparing: () -> Unit = {}
 ) {
     private val requestReader = RtspRequestReader(
@@ -129,7 +131,14 @@ internal class WfdRtspServer(
     }
 
     private fun handleClient(socket: Socket) {
+        if (!admitPlayback()) {
+            sendServiceUnavailable(socket)
+            socket.close()
+            synchronized(this) { if (activeClient === socket) activeClient = null }
+            return
+        }
         try {
+            socket.soTimeout = 15_000
             val input = socket.getInputStream()
             val output = socket.getOutputStream()
             val receiver = WfdMedia(socket.inetAddress, surface,
@@ -152,6 +161,7 @@ internal class WfdRtspServer(
             fun startMedia() {
                 if (playing) return
                 playing = true
+                socket.soTimeout = 0
                 onPreparing()
                 receiver.start()
             }
@@ -205,6 +215,7 @@ internal class WfdRtspServer(
             }
             media?.close()
             media = null
+            releasePlayback()
             if (running) onSessionStopped()
             synchronized(this) { if (activeClient === socket) activeClient = null }
         }

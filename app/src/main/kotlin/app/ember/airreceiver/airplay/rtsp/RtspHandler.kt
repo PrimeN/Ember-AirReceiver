@@ -79,6 +79,7 @@ open class RtspHandler(
     private val onRemoteControlInfo: (dacpId: String?, activeRemote: String?) -> Unit = { _, _ -> },
     /** When true, require HomeKit-style SRP PIN pairing before streaming (gated by AppSettings). */
     private val advertisedFps: Int = 60,
+    private val admitPlayback: () -> Boolean = { true },
     private val audioOnlyMode: Boolean = false,
     private val hevcEnabled: Boolean = false,
     private val pinAuthEnabled: Boolean = false,
@@ -179,6 +180,7 @@ open class RtspHandler(
     private val router: RtspRequestRouter by lazy {
         RtspRequestRouter(
             verbs = this,
+            admitPlayback = admitPlayback,
             audioOnlyMode = audioOnlyMode,
             mirrorHandler = mirrorHandler,
             pairingHandler = pairingHandler,

@@ -106,6 +106,9 @@ internal class DlnaAvTransportService(
         if (previous == DlnaTransportState.TRANSPORT_PLAYING) {
             return SoapResponses.ok(action = "Play", service = SERVICE, values = emptyMap())
         }
+        if (!controller.admitPlayback()) return SoapResponses.fault(
+            SoapResponses.ERROR_TRANSITION_NOT_AVAILABLE, "Receiver busy"
+        )
         state.transportState = DlnaTransportState.TRANSPORT_PLAYING
         state.loadFailed = false
         val position = state.trackedPositionMillis()

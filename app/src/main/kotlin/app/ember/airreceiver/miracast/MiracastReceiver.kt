@@ -55,6 +55,8 @@ import kotlinx.coroutines.cancel
 class MiracastReceiver(
     private val context: Context,
     private val surfaceProvider: () -> Surface? = { null },
+    private val admitPlayback: () -> Boolean = { true },
+    private val releasePlayback: () -> Unit = {},
     private val onStateChanged: (ProtocolState) -> Unit
 ) {
 
@@ -76,6 +78,8 @@ class MiracastReceiver(
     private var groupListener: BroadcastReceiver? = null
     private val rtspServer = WfdRtspServer(
         surface = surfaceProvider,
+        admitPlayback = admitPlayback,
+        releasePlayback = releasePlayback,
         onPreparing = { onStateChanged(ProtocolState.NEGOTIATING) },
         onSessionStarted = {
             Logger.i("Miracast WFD session connected")

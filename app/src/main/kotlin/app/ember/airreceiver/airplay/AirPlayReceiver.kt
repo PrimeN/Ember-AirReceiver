@@ -69,6 +69,8 @@ class AirPlayReceiver(
     /** Whether to accept the mirroring audio stream (experimental — see AppSettings.mirrorAudioEnabled). */
     private val lowBandwidthMirroring: Boolean = false,
     private val audioOnlyMode: Boolean = false,
+    private val admitPlayback: () -> Boolean = { true },
+    private val releasePlayback: () -> Unit = {},
     private val audioEnabled: Boolean = false,
     /** Require HomeKit-style SRP PIN pairing before streaming (AppSettings.airPlayPinAuthEnabled). */
     private val pinAuthEnabled: Boolean = false,
@@ -302,6 +304,7 @@ class AirPlayReceiver(
             hevcEnabled = hevcEnabled,
             audioOnlyMode = audioOnlyMode,
             audioEnabled = audioEnabled,
+            admitPlayback = admitPlayback,
             videoSurfaceProvider = videoSurfaceProvider,
             onStreamingStarted = { session -> onStreamingStarted(session) },
             onStreamingStopped = { onStreamingStopped() },
@@ -454,6 +457,7 @@ class AirPlayReceiver(
         mediaPipeline.releaseDecoders()
         setSessionVolume(0f)
         nowPlaying.reset()
+        releasePlayback()
     }
 
     // ─── Private: state emission ─────────────────────────────────────────────
