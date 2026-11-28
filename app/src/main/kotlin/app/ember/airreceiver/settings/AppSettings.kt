@@ -97,12 +97,13 @@ data class AppSettings(
      * the whole mirror session down after a couple of seconds — so this defaults OFF to keep video
      * mirroring rock-solid. Turn on to experiment with audio.
      */
+    val lowBandwidthMirroring: Boolean = false,
     val mirrorAudioEnabled: Boolean = true
 ) {
 
     /** Advertised mirroring display size: 2560×1440 when [forceHighResolution], else 1920×1080. */
-    val mirrorWidth: Int get() = if (forceHighResolution) 2560 else 1920
-    val mirrorHeight: Int get() = if (forceHighResolution) 1440 else 1080
+    val mirrorWidth: Int get() = when { lowBandwidthMirroring -> 1280; forceHighResolution -> 2560; else -> 1920 }
+    val mirrorHeight: Int get() = when { lowBandwidthMirroring -> 720; forceHighResolution -> 1440; else -> 1080 }
 
     /**
      * Returns the validated, trimmed display name.

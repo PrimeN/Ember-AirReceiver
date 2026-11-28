@@ -67,6 +67,7 @@ class AirPlayReceiver(
     private val mirrorWidth: Int = 1920,
     private val mirrorHeight: Int = 1080,
     /** Whether to accept the mirroring audio stream (experimental — see AppSettings.mirrorAudioEnabled). */
+    private val lowBandwidthMirroring: Boolean = false,
     private val audioEnabled: Boolean = false,
     /** Require HomeKit-style SRP PIN pairing before streaming (AppSettings.airPlayPinAuthEnabled). */
     private val pinAuthEnabled: Boolean = false,
@@ -144,7 +145,8 @@ class AirPlayReceiver(
     private val mediaPipeline = AirPlayMediaPipeline(scope, videoSurfaceProvider)
 
     private val advertisedFps by lazy {
-        app.ember.airreceiver.airplay.mirror.MirrorCapabilities.frameRate(context, mirrorWidth, mirrorHeight)
+        if (lowBandwidthMirroring) 30
+        else app.ember.airreceiver.airplay.mirror.MirrorCapabilities.frameRate(context, mirrorWidth, mirrorHeight)
     }
     private val hevcEnabled by lazy {
         app.ember.airreceiver.airplay.mirror.MirrorCapabilities.supportsHevc(mirrorWidth, mirrorHeight, advertisedFps)

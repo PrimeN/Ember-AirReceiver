@@ -120,6 +120,7 @@ class SettingsRepository(private val context: Context) {
         startOnBoot        = this[Keys.START_ON_BOOT]           ?: false,
         showDebugOverlay   = this[Keys.SHOW_DEBUG_OVERLAY]      ?: false,
         forceHighResolution = this[Keys.FORCE_HIGH_RESOLUTION]  ?: false,
+        lowBandwidthMirroring = this[Keys.LOW_BANDWIDTH] ?: false,
         mirrorAudioEnabled = this[Keys.MIRROR_AUDIO_ENABLED]    ?: true
     )
 
@@ -137,6 +138,7 @@ class SettingsRepository(private val context: Context) {
         this[Keys.START_ON_BOOT]        = settings.startOnBoot
         this[Keys.SHOW_DEBUG_OVERLAY]   = settings.showDebugOverlay
         this[Keys.FORCE_HIGH_RESOLUTION] = settings.forceHighResolution
+        this[Keys.LOW_BANDWIDTH] = settings.lowBandwidthMirroring
         this[Keys.MIRROR_AUDIO_ENABLED] = settings.mirrorAudioEnabled
     }
 
@@ -156,6 +158,7 @@ class SettingsRepository(private val context: Context) {
         val START_ON_BOOT       = booleanPreferencesKey("start_on_boot")
         val SHOW_DEBUG_OVERLAY  = booleanPreferencesKey("show_debug_overlay")
         val FORCE_HIGH_RESOLUTION = booleanPreferencesKey("force_high_resolution")
+        val LOW_BANDWIDTH = booleanPreferencesKey("low_bandwidth")
         val MIRROR_AUDIO_ENABLED = booleanPreferencesKey("mirror_audio_enabled")
     }
 }

@@ -227,4 +227,6 @@
     <string name="ember_playback_ahead">Forward 10 seconds</string>
     <string name="ember_playback_progress">%1$s / %2$s</string>
     <string name="ember_local_network_permission">Allow Ember AirReceiver to find and connect to devices on your local network.</string>
+    <string name="setting_low_bandwidth">Low-bandwidth mirroring</string>
+    <string name="setting_low_bandwidth_detail">Request up to 720p at 30 frames per second on the next AirPlay connection</string>
 </resources>

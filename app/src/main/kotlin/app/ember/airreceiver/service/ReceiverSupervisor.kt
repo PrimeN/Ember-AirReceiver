@@ -122,6 +122,7 @@ internal class ReceiverSupervisor(
             mirrorWidth = settings.mirrorWidth,
             mirrorHeight = settings.mirrorHeight,
             audioEnabled = settings.mirrorAudioEnabled,
+            lowBandwidthMirroring = settings.lowBandwidthMirroring,
             pinAuthEnabled = settings.airPlayPinAuthEnabled,
             // Delegate to the current provider at call time — captures the field, not a fixed value.
             // When AirReceiverActivity calls setVideoSurfaceProvider(), future surface requests use it.
