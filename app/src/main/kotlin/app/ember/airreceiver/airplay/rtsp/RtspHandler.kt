@@ -5,6 +5,8 @@ package app.ember.airreceiver.airplay.rtsp
 import app.ember.airreceiver.airplay.playback.PhotoImageType
 import app.ember.airreceiver.airplay.playback.PlaybackInfo
 import app.ember.airreceiver.util.Logger
+import app.ember.airreceiver.settings.AirPlayPinPolicy
+import app.ember.airreceiver.settings.MirrorFormat
 import app.ember.airreceiver.util.releaseQuietly
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -87,7 +89,13 @@ open class RtspHandler(
     private val pairingStore: app.ember.airreceiver.airplay.pairing.PairingStore? = null,
     /** Shows ([pin]) or hides (null) the on-screen pairing PIN during SRP pair-setup. */
     private val onShowPin: (pin: String?) -> Unit = {},
-    private val onAudioFlush: (firstSequence: Int?) -> Unit = {}
+    private val onAudioFlush: (firstSequence: Int?) -> Unit = {},
+    private val pinPolicy: () -> AirPlayPinPolicy = {
+        if (pinAuthEnabled) AirPlayPinPolicy.REMEMBER else AirPlayPinPolicy.OFF
+    },
+    private val mirrorFormat: () -> MirrorFormat = { MirrorFormat(displayWidth, displayHeight, advertisedFps, hevcEnabled) },
+    private val onControlOpened: () -> Unit = {},
+    private val approveAudioOnly: (String) -> Boolean = { true }
 ) {
 
     /** The mutable state of the current control connection (session, FairPlay, pairing, mirror). */
@@ -104,7 +112,14 @@ open class RtspHandler(
             onPhotoCleared = onPhotoCleared,
             onMirrorAudioStop = onMirrorAudioStop,
             onMirrorVideoStop = onMirrorVideoStop,
-            onBufferedAudioStop = onBufferedAudioStop
+            onBufferedAudioStop = onBufferedAudioStop,
+            onFullTeardown = {
+                sessionState.mirrorKeysReady = false
+                sessionState.audioModeApproved = false
+                if (pinPolicy() == AirPlayPinPolicy.EACH_SESSION) pairingHandler.endSession()
+            },
+            admitPlayback = admitPlayback,
+            approveAudioOnly = approveAudioOnly
         )
     }
 
@@ -116,7 +131,8 @@ open class RtspHandler(
             sessionState = sessionState,
             pinAuthEnabled = pinAuthEnabled,
             pairingStore = pairingStore,
-            onShowPin = onShowPin
+            onShowPin = onShowPin,
+            pinPolicy = pinPolicy
         )
     }
 
@@ -129,7 +145,9 @@ open class RtspHandler(
             onMirrorSetupKeys = onMirrorSetupKeys,
             onMirrorStreamStart = onMirrorStreamStart,
             onMirrorAudioStart = onMirrorAudioStart,
-            onBufferedAudioStart = onBufferedAudioStart
+            onBufferedAudioStart = onBufferedAudioStart,
+            admitPlayback = admitPlayback,
+            approveAudioOnly = approveAudioOnly
         )
     }
 
@@ -144,6 +162,13 @@ open class RtspHandler(
 
     private val senderHls = SenderHlsTransport(onVideoPlay, onVideoStop)
 
+    internal fun disconnectSender(): Boolean {
+        senderHls.stopPlayback()
+        val client = activeClient ?: return false
+        runCatching { client.close() }
+        return true
+    }
+
     internal fun cancelPlaylistPlayback() = senderHls.stopPlayback()
 
     /** The AirPlay URL-video mode: /play, /rate, /scrub, /stop and /playback-info. */
@@ -157,6 +182,7 @@ open class RtspHandler(
                 onVideoStop()
             },
             onPlaybackInfo = onPlaybackInfo,
+            admitPlayback = admitPlayback,
             onSenderPlaylist = { request, url, offset ->
                 senderHls.play(request, sessionState.currentRemoteAddress, url, offset)
             }
@@ -172,7 +198,9 @@ open class RtspHandler(
             advertisedFps = advertisedFps,
             audioOnlyMode = audioOnlyMode,
         hevcEnabled = hevcEnabled,
-            pinAuthEnabled = pinAuthEnabled
+            pinAuthEnabled = pinAuthEnabled,
+            pinRequired = { pinPolicy() != AirPlayPinPolicy.OFF },
+            mirrorFormat = mirrorFormat
         )
     }
 
@@ -180,7 +208,6 @@ open class RtspHandler(
     private val router: RtspRequestRouter by lazy {
         RtspRequestRouter(
             verbs = this,
-            admitPlayback = admitPlayback,
             audioOnlyMode = audioOnlyMode,
             mirrorHandler = mirrorHandler,
             pairingHandler = pairingHandler,
@@ -199,7 +226,9 @@ open class RtspHandler(
             sessionState = sessionState,
             router = router,
             senderHls = senderHls,
-            onStreamingStopped = onStreamingStopped
+            onStreamingStopped = onStreamingStopped,
+            onControlOpened = onControlOpened,
+            onControlClosed = { pairingHandler.endSession() }
         )
     }
 

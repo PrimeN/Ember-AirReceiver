@@ -34,7 +34,10 @@ internal class RtspVerbHandler(
     private val onPhotoCleared: () -> Unit,
     private val onMirrorAudioStop: () -> Unit,
     private val onMirrorVideoStop: () -> Unit,
-    private val onBufferedAudioStop: () -> Unit
+    private val onBufferedAudioStop: () -> Unit,
+    private val onFullTeardown: () -> Unit = {},
+    private val admitPlayback: () -> Boolean = { true },
+    private val approveAudioOnly: (String) -> Boolean = { true }
 ) {
 
     // ─── Shared session state (see [RtspSessionState]) ──────────────────────
@@ -152,6 +155,13 @@ internal class RtspVerbHandler(
                 currentSession = session
             }
         }
+        if (session.isAudioOnly && !sessionState.audioModeApproved) {
+            if (!approveAudioOnly(session.senderName)) {
+                return RtspResponse(403, "Audio Playback Declined", protocol = request.responseProtocol())
+            }
+            sessionState.audioModeApproved = true
+        }
+        if (!admitPlayback()) return RtspResponse(503, "Receiver Busy", protocol = request.responseProtocol())
         Logger.i("RECORD — streaming starting (audioOnly=${session.isAudioOnly}, encrypted=${session.isAudioEncrypted})")
         onStreamingStarted(session)
         return RtspResponse(statusCode = 200, statusMessage = "OK")
@@ -185,6 +195,7 @@ internal class RtspVerbHandler(
             Logger.i("TEARDOWN (session, body=${request.bodyBytes.size}B) — streaming stopping")
         }
         activeStreamTypes.clear()
+        onFullTeardown()
         onStreamingStopped()
         return RtspResponse(statusCode = 200, statusMessage = "OK", protocol = request.responseProtocol())
     }
@@ -219,6 +230,7 @@ internal class RtspVerbHandler(
             request.headers["Content-Type"]
         )) {
             is PhotoValidation.Valid -> {
+                if (!admitPlayback()) return RtspResponse(503, "Receiver Busy", protocol = request.responseProtocol())
                 onPhotoReceived(request.bodyBytes, validation.imageType)
                 Logger.i("Photo received (${validation.imageType.mimeType}, ${request.bodyBytes.size} bytes)")
                 RtspResponse(

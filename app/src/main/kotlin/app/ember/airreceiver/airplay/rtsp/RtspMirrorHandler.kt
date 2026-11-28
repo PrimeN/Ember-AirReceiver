@@ -32,6 +32,8 @@ internal class RtspMirrorHandler(
     ) -> Pair<Int, Int>,
     private val onMirrorStreamStart: (streamConnectionId: Long) -> Int,
     private val onMirrorAudioStart: (sampleRate: Int, channels: Int, codecType: Int, framesPerPacket: Int) -> Pair<Int, Int>,
+    private val admitPlayback: () -> Boolean = { true },
+    private val approveAudioOnly: (String) -> Boolean = { true },
     private val onBufferedAudioStart: () -> Int
 ) {
 
@@ -105,6 +107,7 @@ internal class RtspMirrorHandler(
                 val senderTimingPort = (req["timingPort"] as? Long)?.toInt() ?: 0
                 val remoteAddr = currentRemoteAddress ?: error("mirror SETUP without remote address")
                 val (eventPort, timingPort) = onMirrorSetupKeys(aesKey, ecdhSecret, aesIv, remoteAddr, senderTimingPort)
+                sessionState.mirrorKeysReady = true
                 response["eventPort"] = eventPort.toLong()
                 response["timingPort"] = timingPort.toLong()
                 Logger.i("mirror SETUP keys OK — eventPort=$eventPort timingPort=$timingPort (sender timing $senderTimingPort)")
@@ -115,6 +118,28 @@ internal class RtspMirrorHandler(
                 return RtspResponse(461, "Unsupported Transport", protocol = request.responseProtocol())
             }
             if (streams != null) {
+                val types = streams.mapNotNull { ((it as? Map<*, *>)?.get("type") as? Number)?.toInt() }
+                val video = 110 in types
+                val audio = audioEnabled && (96 in types || StreamSupport.TYPE_BUFFERED_AUDIO in types)
+                val audioOnly = audio && !video && 110 !in activeStreamTypes &&
+                    (audioOnlyMode || StreamSupport.TYPE_BUFFERED_AUDIO in types ||
+                        streams.any { stream ->
+                            val codec = ((stream as? Map<*, *>)?.get("ct") as? Number)?.toInt()
+                            codec == 2 || codec == 4
+                        })
+                if ((video || audio) && !sessionState.mirrorKeysReady) {
+                    return RtspResponse(455, "Session unavailable", protocol = request.responseProtocol())
+                }
+                if (audioOnly && !sessionState.audioModeApproved) {
+                    val sender = request.headers["User-Agent"]?.substringBefore("/") ?: ""
+                    if (!approveAudioOnly(sender)) {
+                        return RtspResponse(403, "Audio Playback Declined", protocol = request.responseProtocol())
+                    }
+                    sessionState.audioModeApproved = true
+                }
+                if ((video || audio) && !admitPlayback()) {
+                    return RtspResponse(503, "Receiver Busy", protocol = request.responseProtocol())
+                }
                 val resStreams = streams.mapNotNull { s ->
                     val stream = s as? Map<*, *> ?: return@mapNotNull null
                     when ((stream["type"] as? Long)?.toInt()) {

@@ -65,6 +65,13 @@ internal class ServiceStateBus {
     /** Read-only view of [dlnaStateFlow]. */
     val dlnaState: StateFlow<ProtocolState> = dlnaStateFlow.asStateFlow()
 
+    fun protocolState(protocol: Protocol): MutableStateFlow<ProtocolState> = when (protocol) {
+        Protocol.AIRPLAY -> airPlayStateFlow
+        Protocol.MIRACAST -> miracastStateFlow
+        Protocol.CAST -> castStateFlow
+        Protocol.DLNA -> dlnaStateFlow
+    }
+
     // ─── Session state ───────────────────────────────────────────────────────
 
     /** Mutable source of the currently streaming connection (null when nothing streams). */

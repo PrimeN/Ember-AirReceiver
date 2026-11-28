@@ -111,6 +111,8 @@ class MiracastReceiver(
      * Unregisters P2P service, disconnects any active WFD session,
      * and releases the WifiP2pManager channel.
      */
+    internal fun disconnectSender() = rtspServer.disconnectSender()
+
     fun stop() {
         Logger.i("MiracastReceiver stopping")
         groupListener?.let { runCatching { context.unregisterReceiver(it) } }

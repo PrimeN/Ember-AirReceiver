@@ -105,6 +105,10 @@ internal class WfdRtspServer(
         groupInterface = address
     }
 
+    internal fun disconnectSender() {
+        runCatching { activeClient?.close() }
+    }
+
     fun disconnect() {
         groupInterface = null
         runCatching { activeClient?.close() }
@@ -131,12 +135,7 @@ internal class WfdRtspServer(
     }
 
     private fun handleClient(socket: Socket) {
-        if (!admitPlayback()) {
-            sendServiceUnavailable(socket)
-            socket.close()
-            synchronized(this) { if (activeClient === socket) activeClient = null }
-            return
-        }
+        var admitted = false
         try {
             socket.soTimeout = 15_000
             val input = socket.getInputStream()
@@ -177,12 +176,19 @@ internal class WfdRtspServer(
                         val transport = header("Transport").orEmpty()
                         if (!transport.startsWith("RTP/AVP/UDP", true) && !transport.startsWith("RTP/AVP;", true)) break
                         playSequence = command("PLAY", presentation, "Session: $session\r\n")
-                    } else if (currentCSeq == playSequence) startMedia()
+                    } else if (currentCSeq == playSequence && playSequence >= 0) {
+                        admitted = admitted || admitPlayback()
+                        if (!admitted) break
+                        startMedia()
+                    }
                     continue
                 }
                 val response = if (request.method == "PLAY" && (!inboundSetup ||
                         header("Session")?.substringBefore(';') != WFD_SESSION_ID)) {
                     RtspResponse(455, "Session unavailable")
+                } else if (request.method == "PLAY" && !admitted) {
+                    admitted = admitPlayback()
+                    if (admitted) routeRequest(request) else RtspResponse(503, "Receiver Busy")
                 } else routeRequest(request)
                 sendResponse(output, response)
                 when (request.method) {
@@ -215,7 +221,7 @@ internal class WfdRtspServer(
             }
             media?.close()
             media = null
-            releasePlayback()
+            if (admitted) releasePlayback()
             if (running) onSessionStopped()
             synchronized(this) { if (activeClient === socket) activeClient = null }
         }

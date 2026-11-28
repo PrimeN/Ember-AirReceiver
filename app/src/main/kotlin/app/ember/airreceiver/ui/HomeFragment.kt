@@ -22,6 +22,7 @@ import app.ember.airreceiver.BuildConfig
 import app.ember.airreceiver.AirReceiverActivity
 import app.ember.airreceiver.R
 import app.ember.airreceiver.service.AirReceiverService
+import app.ember.airreceiver.service.Protocol
 import app.ember.airreceiver.service.ProtocolState
 import app.ember.airreceiver.service.ServiceController
 import app.ember.airreceiver.service.ServiceState
@@ -48,22 +49,18 @@ class HomeFragment : Fragment() {
     // Service binding — gives direct access to AirReceiverService StateFlows
     private var service: AirReceiverService? = null
     private var isBound = false
-
-    // Last observed service state — used to phrase the "Disabled" hint on the
-    // protocol cards correctly (see disabledDetailRes()).
-    private var currentServiceState: ServiceState = ServiceState.Stopped
+    private var stateObserver: kotlinx.coroutines.Job? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = (binder as? AirReceiverService.LocalBinder)?.getService()
-            isBound = true
             Logger.d("HomeFragment: bound to AirReceiverService")
             observeServiceState()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             service = null
-            isBound = false
+            stateObserver?.cancel()
             Logger.d("HomeFragment: unbound from AirReceiverService")
         }
     }
@@ -96,11 +93,13 @@ class HomeFragment : Fragment() {
         super.onStart()
         // Bind to the service so we can observe its StateFlows
         val intent = Intent(requireContext(), AirReceiverService::class.java)
-        requireContext().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        isBound = requireContext().bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
     override fun onStop() {
         super.onStop()
+        stateObserver?.cancel()
+        service = null
         if (isBound) {
             requireContext().unbindService(serviceConnection)
             isBound = false
@@ -127,13 +126,22 @@ class HomeFragment : Fragment() {
      * The dynamic parts (state, detail text) are updated when service state changes.
      */
     private fun configureProtocolCards() {
-        setupCard(cardAirPlay,   R.drawable.ic_airplay,  R.string.protocol_airplay)
-        setupCard(cardMiracast,  R.drawable.ic_miracast, R.string.protocol_miracast)
-        setupCard(cardCast,      R.drawable.ic_cast,     R.string.protocol_cast)
-        setupCard(cardDlna,      R.drawable.ic_dlna,     R.string.protocol_dlna)
+        setupCard(cardAirPlay,   R.drawable.ic_airplay,  R.string.protocol_airplay, Protocol.AIRPLAY)
+        setupCard(cardMiracast,  R.drawable.ic_miracast, R.string.protocol_miracast, Protocol.MIRACAST)
+        setupCard(cardCast,      R.drawable.ic_cast,     R.string.protocol_cast, Protocol.CAST)
+        setupCard(cardDlna,      R.drawable.ic_dlna,     R.string.protocol_dlna, Protocol.DLNA)
     }
 
-    private fun setupCard(card: View, iconRes: Int, nameRes: Int) {
+    private fun setupCard(card: View, iconRes: Int, nameRes: Int, protocol: Protocol) {
+        card.isFocusable = protocol != Protocol.CAST || BuildConfig.FLAVOR == "googletv"
+        if (card.isFocusable) {
+            card.isFocusable = true
+            card.setOnClickListener {
+                val state = service?.receiverState(protocol)?.value ?: return@setOnClickListener
+                val enabled = !state.isServing && state != ProtocolState.NOT_CONFIGURED
+                (activity as? AirReceiverActivity)?.setReceiverEnabled(protocol, enabled)
+            }
+        }
         card.findViewById<android.widget.ImageView>(R.id.img_protocol_icon)?.setImageResource(iconRes)
         card.findViewById<TextView>(R.id.text_protocol_name)?.setText(nameRes)
     }
@@ -146,9 +154,9 @@ class HomeFragment : Fragment() {
         requireView().findViewById<Button>(R.id.btn_connection_help).setOnClickListener { showConnectionHelp() }
         btnStart.setOnClickListener {
             Logger.d("User tapped Start")
-            if ((activity as? AirReceiverActivity)?.requestLocalNetworkPermissionIfNeeded() != true) {
-                ServiceController.start(requireContext())
-            }
+            val context = requireContext()
+            val start = { ServiceController.start(context) }
+            if ((activity as? AirReceiverActivity)?.requestLocalNetworkPermissionIfNeeded(start) != true) start()
         }
         btnStop.setOnClickListener {
             Logger.d("User tapped Stop")
@@ -156,13 +164,14 @@ class HomeFragment : Fragment() {
         }
         btnRestart.setOnClickListener {
             Logger.d("User tapped Restart")
-            if ((activity as? AirReceiverActivity)?.requestLocalNetworkPermissionIfNeeded() == true) return@setOnClickListener
-            val permissionRequired = service?.miracastState?.value == ProtocolState.PERMISSION_REQUIRED
-            if (!permissionRequired ||
-                (activity as? AirReceiverActivity)?.requestMiracastPermissionIfNeeded() != true
-            ) {
-                ServiceController.restart(requireContext())
+            val context = requireContext()
+            val restart = { ServiceController.restart(context) }
+            val host = activity as? AirReceiverActivity
+            val afterNetwork = {
+                if (service?.miracastState?.value != ProtocolState.PERMISSION_REQUIRED ||
+                    host?.requestMiracastPermissionIfNeeded(restart) != true) restart()
             }
+            if (host?.requestLocalNetworkPermissionIfNeeded(afterNetwork) != true) afterNetwork()
         }
     }
 
@@ -214,21 +223,23 @@ class HomeFragment : Fragment() {
      */
     private fun observeServiceState() {
         val svc = service ?: return
-
-        viewLifecycleOwner.lifecycleScope.launch {
-            svc.serviceState.collectLatest { state -> updateServiceStateBadge(state) }
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            svc.airPlayState.collectLatest { state -> updateProtocolCard(cardAirPlay, state) }
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            svc.miracastState.collectLatest { state -> updateProtocolCard(cardMiracast, state) }
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            svc.castState.collectLatest { state -> updateProtocolCard(cardCast, state) }
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            svc.dlnaState.collectLatest { state -> updateProtocolCard(cardDlna, state) }
+        stateObserver?.cancel()
+        stateObserver = viewLifecycleOwner.lifecycleScope.launch {
+            launch {
+                svc.serviceState.collectLatest { state -> updateServiceStateBadge(state) }
+            }
+            launch {
+                svc.airPlayState.collectLatest { state -> updateProtocolCard(cardAirPlay, state) }
+            }
+            launch {
+                svc.miracastState.collectLatest { state -> updateProtocolCard(cardMiracast, state) }
+            }
+            launch {
+                svc.castState.collectLatest { state -> updateProtocolCard(cardCast, state) }
+            }
+            launch {
+                svc.dlnaState.collectLatest { state -> updateProtocolCard(cardDlna, state) }
+            }
         }
     }
 
@@ -237,7 +248,6 @@ class HomeFragment : Fragment() {
      * Colors and text reflect whether the service is running, stopped, or restarting.
      */
     private fun updateServiceStateBadge(state: ServiceState) {
-        currentServiceState = state
         val (textRes, colorRes) = when (state) {
             is ServiceState.Running    -> Pair(R.string.service_state_running,    R.color.status_running)
             is ServiceState.Stopped    -> Pair(R.string.service_state_stopped,    R.color.status_stopped)
@@ -265,9 +275,10 @@ class HomeFragment : Fragment() {
                 if (card == cardCast && BuildConfig.FLAVOR == "firetv") {
                     R.string.protocol_detail_cast_firetv
                 } else {
-                    disabledDetailRes()
+                    R.string.protocol_detail_disabled
                 }
             )
+            ProtocolState.STARTING -> Triple(R.string.protocol_state_starting, R.color.status_transitioning, R.string.protocol_detail_restarting)
             ProtocolState.ADVERTISING -> Triple(R.string.protocol_state_advertising, R.color.status_running,   R.string.protocol_detail_waiting)
             ProtocolState.CONNECTED   -> Triple(R.string.protocol_state_connected,   R.color.status_running,   R.string.protocol_detail_connected)
             ProtocolState.NEGOTIATING -> Triple(R.string.protocol_state_preparing,
@@ -285,22 +296,17 @@ class HomeFragment : Fragment() {
             ProtocolState.ERROR       -> Triple(R.string.protocol_state_error,       R.color.status_stopped,   R.string.protocol_detail_error)
         }
 
+        if (card.isClickable) {
+            val name = card.findViewById<TextView>(R.id.text_protocol_name)?.text
+            val turnOff = state.isServing || state == ProtocolState.NOT_CONFIGURED
+            card.contentDescription = getString(
+                if (turnOff) R.string.protocol_tile_turn_off else R.string.protocol_tile_turn_on,
+                name, getString(stateRes)
+            )
+        }
         stateText.setText(stateRes)
         detail.setText(detailRes)
         dot.background.setTint(requireContext().getColor(colorRes))
     }
 
-    /**
-     * Picks the hint shown under a "Disabled" protocol card.
-     *
-     * WHY: "Enable in Settings" is only true when the protocol was switched off in the
-     * Settings screen. When the service itself is not running, the switch may well be
-     * on and the hint sends the user to the wrong place — the very complaint in issue #18
-     * ("it just says disabled even though it's switched on").
-     */
-    private fun disabledDetailRes(): Int = when (currentServiceState) {
-        is ServiceState.Running -> R.string.protocol_detail_disabled
-        is ServiceState.Restarting -> R.string.protocol_detail_restarting
-        else -> R.string.protocol_detail_service_stopped
-    }
 }

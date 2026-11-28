@@ -5,6 +5,7 @@ package app.ember.airreceiver.airplay.rtsp
 import app.ember.airreceiver.airplay.pairing.PairingKeys
 import app.ember.airreceiver.airplay.pairing.PlistCodec
 import app.ember.airreceiver.util.Logger
+import app.ember.airreceiver.settings.AirPlayPinPolicy
 
 /**
  * RtspPairingHandler — handles the AirPlay 2 pairing handshake and the legacy PIN pairing.
@@ -27,7 +28,10 @@ internal class RtspPairingHandler(
     private val sessionState: RtspSessionState,
     private val pinAuthEnabled: Boolean,
     private val pairingStore: app.ember.airreceiver.airplay.pairing.PairingStore?,
-    private val onShowPin: (pin: String?) -> Unit
+    private val onShowPin: (pin: String?) -> Unit,
+    private val pinPolicy: () -> AirPlayPinPolicy = {
+        if (pinAuthEnabled) AirPlayPinPolicy.REMEMBER else AirPlayPinPolicy.OFF
+    }
 ) {
 
     private data class PendingPin(
@@ -38,8 +42,24 @@ internal class RtspPairingHandler(
 
     private var pendingPin: PendingPin? = null
 
+    private var sessionControllerKey: ByteArray? = null
+
     internal fun isAuthorized(): Boolean =
-        !pinAuthEnabled || pairingSession?.verifiedControllerKey?.let { pairingStore?.isTrusted(it) } == true
+        pinPolicy() == AirPlayPinPolicy.OFF || pairingSession?.verifiedControllerKey?.let(::hasPinGrant) == true
+
+    private fun hasPinGrant(controllerKey: ByteArray): Boolean = when (pinPolicy()) {
+        AirPlayPinPolicy.OFF -> true
+        AirPlayPinPolicy.REMEMBER -> pairingStore?.isTrusted(controllerKey) == true
+        AirPlayPinPolicy.EACH_SESSION -> sessionControllerKey?.let {
+            java.security.MessageDigest.isEqual(it, controllerKey)
+        } == true
+    }
+
+    internal fun endSession() {
+        sessionControllerKey = null
+        pairingSession?.resetVerification()
+        clearPin()
+    }
 
     /** The pairing context of this connection (pair-setup / pair-verify). */
     private val pairingSession: app.ember.airreceiver.airplay.pairing.PairingSession?
@@ -70,8 +90,8 @@ internal class RtspPairingHandler(
     internal fun handlePairVerify(request: RtspRequest): RtspResponse {
         return try {
             val raw = request.bodyBytes
-            if (pinAuthEnabled && raw.firstOrNull() == 1.toByte() &&
-                (raw.size != 68 || pairingStore?.isTrusted(raw.copyOfRange(36, 68)) != true)) {
+            if (pinPolicy() != AirPlayPinPolicy.OFF && raw.firstOrNull() == 1.toByte() &&
+                (raw.size != 68 || !hasPinGrant(raw.copyOfRange(36, 68)))) {
                 pairingSession?.resetVerification()
                 return authorizationRequired(request)
             }
@@ -91,7 +111,7 @@ internal class RtspPairingHandler(
      * /pair-setup-pin. (This precedes pair-setup in the AirPlay PIN flow — see the logs.)
      */
     internal fun handlePairPinStart(request: RtspRequest): RtspResponse {
-        if (!pinAuthEnabled) return verbs.handleUnknownInternal(request)
+        if (pinPolicy() == AirPlayPinPolicy.OFF) return verbs.handleUnknownInternal(request)
         if ((pairingStore?.failedAttempts() ?: 0) >= MAX_PAIR_ATTEMPTS) {
             Logger.w("pair-pin-start blocked — PIN auth locked ($MAX_PAIR_ATTEMPTS failed attempts)")
             return RtspResponse(470, "Connection Authorization Required", protocol = request.responseProtocol())
@@ -126,7 +146,7 @@ internal class RtspPairingHandler(
      * is allowed past pair-verify (→ streaming). Bounded by the failed-attempt lockout.
      */
     internal fun handleLegacyPairSetupPin(request: RtspRequest): RtspResponse {
-        if (!pinAuthEnabled) return verbs.handleUnknownInternal(request)
+        if (pinPolicy() == AirPlayPinPolicy.OFF) return verbs.handleUnknownInternal(request)
         if ((pairingStore?.failedAttempts() ?: 0) >= MAX_PAIR_ATTEMPTS) {
             Logger.w("pair-setup-pin blocked — PIN auth locked ($MAX_PAIR_ATTEMPTS failed attempts)")
             onShowPin(null)
@@ -150,7 +170,9 @@ internal class RtspPairingHandler(
             }
             if (result.complete) {
                 val store = pairingStore ?: return authorizationRequired(request)
-                store.trust(checkNotNull(result.controllerKey))
+                val key = checkNotNull(result.controllerKey)
+                if (pinPolicy() == AirPlayPinPolicy.EACH_SESSION) sessionControllerKey = key.copyOf()
+                else store.trust(key)
                 store.resetFailedAttempts()
                 clearPin()
                 Logger.i("PIN pairing complete — pair-verify now permitted")

@@ -49,6 +49,9 @@ enum class ProtocolState {
     /** Protocol is disabled in Settings. */
     DISABLED,
 
+    /** The receiver is starting or registering discovery. */
+    STARTING,
+
     /** Protocol is enabled and advertising — waiting for a sender. */
     ADVERTISING,
 
@@ -65,7 +68,10 @@ enum class ProtocolState {
     NOT_CONFIGURED,
 
     /** The protocol encountered an error (e.g., port already in use). */
-    ERROR
+    ERROR;
+
+    internal val isServing: Boolean
+        get() = this == STARTING || this == ADVERTISING || this == NEGOTIATING || this == CONNECTED
 }
 
 /**

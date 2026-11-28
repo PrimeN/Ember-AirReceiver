@@ -58,7 +58,10 @@ internal class AirPlayMirrorSession(
     private val onStateChanged: (ProtocolState) -> Unit,
     private val onVideoFailure: (String) -> Unit = {},
     private val hevcEnabled: Boolean = false,
-    private val advertisedFps: Int = 60
+    private val advertisedFps: Int = 60,
+    private val mirrorFormat: () -> app.ember.airreceiver.settings.MirrorFormat = {
+        app.ember.airreceiver.settings.MirrorFormat(mirrorWidth, mirrorHeight, advertisedFps, hevcEnabled)
+    }
 ) {
 
     // AirPlay 2 mirroring: data stream server + event channel + keys (set during SETUP).
@@ -129,9 +132,10 @@ internal class AirPlayMirrorSession(
         mirrorServer?.stop()
         firstFrameTimeout?.cancel()
         val generation = ++videoGeneration
+        val format = mirrorFormat()
         val server = MirrorStreamServer(
-            aesKey, ecdhSecret, streamConnectionId, videoSurfaceProvider, mirrorWidth, mirrorHeight,
-            hevcEnabled = hevcEnabled, onFrameRendered = { reportFirstFrame(generation) }, timingClient = ntpClient
+            aesKey, ecdhSecret, streamConnectionId, videoSurfaceProvider, format.width, format.height,
+            hevcEnabled = format.hevc, onFrameRendered = { reportFirstFrame(generation) }, timingClient = ntpClient
         )
         mirrorServer = server
         nowPlaying.videoPlaying = true
@@ -143,7 +147,7 @@ internal class AirPlayMirrorSession(
             reportVideoTimeout(generation)
         }
         server.start(scope)
-        StreamStats.videoAdvertised = "${mirrorWidth}x${mirrorHeight} @ $advertisedFps"
+        StreamStats.videoAdvertised = "${format.width}x${format.height} @ ${format.fps}"
         return server.dataPort
     }
 

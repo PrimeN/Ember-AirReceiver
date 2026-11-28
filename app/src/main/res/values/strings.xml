@@ -35,7 +35,7 @@
     <string name="protocol_state_error">Error</string>
 
     <!-- ── Protocol card detail lines ──────────────────────────── -->
-    <string name="protocol_detail_disabled">Enable in Settings</string>
+    <string name="protocol_detail_disabled">Select to turn on</string>
     <string name="protocol_detail_service_stopped">Start the service to advertise</string>
     <string name="protocol_detail_restarting">Restarting the receiver…</string>
     <string name="protocol_detail_waiting">Waiting for sender…</string>
@@ -243,4 +243,46 @@
     <string name="ember_safe_area">Picture safe area</string>
     <string name="ember_safe_area_reset">Reset to full picture</string>
     <string name="ember_safe_area_amount">%1$d%% inset</string>
+    <string name="setting_start_on_launch">Start receivers when Ember opens</string>
+    <string name="setting_start_on_launch_detail">Start the enabled receivers on app launch</string>
+    <string name="settings_save_error">Ember could not save your setting</string>
+    <string name="setting_pin_policy">AirPlay PIN · %1$s</string>
+    <string name="setting_pin_policy_title">AirPlay PIN policy</string>
+    <string name="setting_pin_off">Off</string>
+    <string name="setting_pin_remember">Remember paired senders</string>
+    <string name="setting_pin_each_session">Require a PIN for each new session (Beta)</string>
+    <string name="setting_pin_policy_detail">A fresh four-digit PIN requires a sender that supports on-screen AirPlay pairing. Changes apply to the next connection.</string>
+    <string name="setting_sender_handoff">Allow a new sender to take over</string>
+    <string name="setting_sender_handoff_detail">Replace the current stream when another supported receiver begins playback</string>
+    <string name="setting_idle_preview">Idle video preview</string>
+    <string name="setting_idle_preview_detail">Show the video area on Home while waiting for a sender</string>
+    <string name="setting_auto_fullscreen">Enter fullscreen automatically</string>
+    <string name="setting_auto_fullscreen_detail">Expand incoming video as soon as it connects</string>
+    <string name="setting_auto_audio_mode">Enter audio mode automatically</string>
+    <string name="setting_auto_audio_mode_detail">Skip approval for supported AirPlay audio-only sessions</string>
+    <string name="setting_mirror_resolution">Mirroring resolution · %1$s</string>
+    <string name="setting_mirror_resolution_title">Mirroring resolution</string>
+    <string name="setting_mirror_fps">Max FPS · %1$s</string>
+    <string name="setting_mirror_fps_title">Maximum mirroring FPS</string>
+    <string name="setting_mirror_auto">Auto</string>
+    <string name="setting_mirror_custom">Custom</string>
+    <string name="setting_mirror_dimensions">%1$d × %2$d</string>
+    <string name="setting_mirror_custom_width">Width in pixels</string>
+    <string name="setting_mirror_custom_height">Height in pixels</string>
+    <string name="setting_mirror_custom_fps">Frames per second</string>
+    <string name="setting_mirror_invalid_size">Enter even dimensions from 320 × 240 up to 3840 × 2160</string>
+    <string name="setting_mirror_invalid_fps">Enter a frame rate between 1 and 120 FPS</string>
+    <string name="setting_mirror_effective">Advertised on the next connection: %1$d × %2$d at up to %3$d FPS</string>
+    <string name="setting_mirror_actual">Current incoming video: %1$d × %2$d at %3$d FPS</string>
+    <string name="setting_mirror_low_bandwidth_note">Low-bandwidth mode limits video to 720p and 30 FPS.</string>
+    <string name="ember_expand_video">Fullscreen</string>
+    <string name="ember_idle_preview">Waiting for video</string>
+    <string name="ember_audio_request_title">Allow AirPlay audio?</string>
+    <string name="ember_audio_request_body">%1$s wants to play audio. This request expires after 20 seconds.</string>
+    <string name="ember_audio_request_sender">An AirPlay sender</string>
+    <string name="ember_audio_request_accept">Allow audio</string>
+    <string name="ember_audio_request_decline">Decline</string>
+    <string name="protocol_state_starting">Starting</string>
+    <string name="protocol_tile_turn_on">%1$s, %2$s. Select to turn on.</string>
+    <string name="protocol_tile_turn_off">%1$s, %2$s. Select to turn off.</string>
 </resources>

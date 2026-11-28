@@ -24,16 +24,28 @@ internal class DlnaAvTransportService(
     private val onLastChange: (String, String) -> Unit
 ) {
 
+    private data class StagedMedia(val uri: String, val metadata: String, val expires: Long)
+
+    private var activeSender: java.net.InetAddress? = null
+    private val staged = linkedMapOf<java.net.InetAddress, StagedMedia>()
+
     /** Handles a single AVTransport action. */
-    fun handle(action: String, values: Map<String, String>): SoapResult = synchronized(state) {
+    fun handle(action: String, values: Map<String, String>, sender: java.net.InetAddress? = null): SoapResult = synchronized(state) {
+        val otherSender = sender != null && activeSender != null && activeSender != sender &&
+            state.transportState != DlnaTransportState.TRANSPORT_STOPPED
+        if (otherSender && action in setOf("Pause", "Stop", "Seek", "SetNextAVTransportURI")) {
+            return@synchronized receiverBusy()
+        }
         when (action) {
-            "SetAVTransportURI" -> setAvTransportUri(values)
+            "SetAVTransportURI" -> setAvTransportUri(values, sender, otherSender)
             "SetNextAVTransportURI" -> setNextAvTransportUri(values)
             "GetDeviceCapabilities" -> SoapResponses.ok(
                 action = action, service = SERVICE,
                 values = mapOf("PlayMedia" to "NETWORK", "RecMedia" to "NOT_IMPLEMENTED", "RecQualityModes" to "NOT_IMPLEMENTED")
             )
-            "Play" -> play()
+            "Play" -> if (sender != null && (otherSender || staged.containsKey(sender))) {
+                replacePlayback(sender)
+            } else play(sender)
             "Pause" -> pause()
             "Stop" -> stop()
             "Seek" -> seek(values)
@@ -48,7 +60,9 @@ internal class DlnaAvTransportService(
         }
     }
 
-    private fun setAvTransportUri(values: Map<String, String>): SoapResult {
+    private fun setAvTransportUri(
+        values: Map<String, String>, sender: java.net.InetAddress?, otherSender: Boolean
+    ): SoapResult {
         // The URI must be accepted in every shape a real control point sends it.
         // Only a URI that cannot be fetched at all (empty, oversized, control
         // characters, unknown scheme) is refused — refusing more would make the
@@ -59,8 +73,19 @@ internal class DlnaAvTransportService(
                 return SoapResponses.fault(SoapResponses.ERROR_INVALID_ARGS, "Invalid CurrentURI")
             }
         }
+        val metadata = values["CurrentURIMetaData"].orEmpty().take(MAX_METADATA_CHARS)
+        if (otherSender) {
+            if (!controller.canReplaceSender()) return receiverBusy()
+            val key = checkNotNull(sender)
+            staged.remove(key)
+            if (staged.size >= 8) staged.remove(staged.keys.first())
+            staged[key] = StagedMedia(uri, metadata, System.nanoTime() + 30_000_000_000L)
+            return SoapResponses.ok(action = "SetAVTransportURI", service = SERVICE, values = emptyMap())
+        }
+        sender?.let(staged::remove)
+        activeSender = sender
         clearNext()
-        storeCurrent(uri, values["CurrentURIMetaData"].orEmpty())
+        storeCurrent(uri, metadata)
         publishTransportState()
         return SoapResponses.ok(action = "SetAVTransportURI", service = SERVICE, values = emptyMap())
     }
@@ -95,7 +120,17 @@ internal class DlnaAvTransportService(
         state.nextUriMetadata = ""
     }
 
-    private fun play(): SoapResult {
+    private fun receiverBusy() = SoapResponses.fault(SoapResponses.ERROR_TRANSITION_NOT_AVAILABLE, "Receiver busy")
+
+    private fun replacePlayback(sender: java.net.InetAddress): SoapResult {
+        val media = staged.remove(sender)?.takeIf { System.nanoTime() - it.expires < 0 } ?: return receiverBusy()
+        if (!controller.canReplaceSender() || !controller.admitPlayback()) return receiverBusy()
+        clearNext()
+        storeCurrent(media.uri, media.metadata, notifyController = false)
+        return play(sender, alreadyAdmitted = true)
+    }
+
+    private fun play(sender: java.net.InetAddress? = null, alreadyAdmitted: Boolean = false): SoapResult {
         if (state.currentUri.isBlank()) {
             return SoapResponses.fault(
                 SoapResponses.ERROR_TRANSITION_NOT_AVAILABLE,
@@ -106,9 +141,8 @@ internal class DlnaAvTransportService(
         if (previous == DlnaTransportState.TRANSPORT_PLAYING) {
             return SoapResponses.ok(action = "Play", service = SERVICE, values = emptyMap())
         }
-        if (!controller.admitPlayback()) return SoapResponses.fault(
-            SoapResponses.ERROR_TRANSITION_NOT_AVAILABLE, "Receiver busy"
-        )
+        if (!alreadyAdmitted && !controller.admitPlayback()) return receiverBusy()
+        if (sender != null) activeSender = sender
         state.transportState = DlnaTransportState.TRANSPORT_PLAYING
         state.loadFailed = false
         val position = state.trackedPositionMillis()
@@ -134,6 +168,7 @@ internal class DlnaAvTransportService(
     }
 
     private fun stop(): SoapResult {
+        staged.clear()
         clearNext()
         state.loadId++
         state.loadFailed = false

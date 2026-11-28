@@ -28,6 +28,39 @@ import org.junit.Test
 class DlnaSoapDispatcherTest {
 
     @Test
+    fun `replacement sender must stage media and request playback before taking over`() {
+        val played = mutableListOf<String>()
+        var allowReplacement = false
+        val controller = object : app.ember.airreceiver.dlna.DlnaPlaybackController
+            by app.ember.airreceiver.dlna.DlnaPlaybackController.NOOP {
+            override fun canReplaceSender() = allowReplacement
+            override fun onPlayLoad(
+                uri: String, metadata: app.ember.airreceiver.dlna.DlnaMediaMetadata?, loadId: Long, positionMillis: Long
+            ) {
+                played += uri
+            }
+        }
+        val dispatcher = DlnaSoapDispatcher(controller)
+        val first = java.net.InetAddress.getByAddress(byteArrayOf(10, 0, 0, 1))
+        val next = java.net.InetAddress.getByAddress(byteArrayOf(10, 0, 0, 2))
+        fun request(sender: java.net.InetAddress, action: String, xml: String = "") =
+            dispatcher.dispatch("/upnp/control/AVTransport", null, envelope("AVTransport", action, xml), sender)
+        fun load(sender: java.net.InetAddress) =
+            request(sender, "SetAVTransportURI", "<CurrentURI>http://${sender.hostAddress}/video.mp4</CurrentURI>")
+
+        assertEquals(200, load(first).statusCode)
+        assertEquals(200, request(first, "Play").statusCode)
+        assertEquals(500, load(next).statusCode)
+        allowReplacement = true
+        assertEquals(500, request(next, "Play").statusCode)
+        assertEquals(200, load(next).statusCode)
+        assertEquals(listOf("http://10.0.0.1/video.mp4"), played)
+        assertEquals(200, request(next, "Play").statusCode)
+        assertEquals(500, request(first, "Stop").statusCode)
+        assertEquals(listOf("http://10.0.0.1/video.mp4", "http://10.0.0.2/video.mp4"), played)
+    }
+
+    @Test
     fun `ConnectionManager GetProtocolInfo returns a non-empty Source list`() {
         val result = dispatch(
             "/upnp/control/ConnectionManager",

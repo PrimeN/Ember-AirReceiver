@@ -20,7 +20,16 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.activity.OnBackPressedCallback
+import androidx.constraintlayout.widget.ConstraintLayout
+import android.view.Gravity
+import android.widget.Button
+import app.ember.airreceiver.service.AudioModeApproval
+import app.ember.airreceiver.settings.AppSettings
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
+import app.ember.airreceiver.service.Protocol
+import app.ember.airreceiver.settings.SettingsRepository
 import app.ember.airreceiver.airplay.nowplaying.NowPlayingInfo
 import app.ember.airreceiver.service.PhotoFrame
 import app.ember.airreceiver.service.ProtocolState
@@ -56,17 +65,27 @@ import app.ember.airreceiver.ui.StreamingScreen
  */
 class AirReceiverActivity : AppCompatActivity() {
 
+    private var pendingNetworkAction: (() -> Unit)? = null
+    private var pendingMiracastAction: (() -> Unit)? = null
+
     private val localNetworkPermissionRequest =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) ServiceController.start(this)
+            if (granted) completeNetworkPermissionRequest()
             else showLocalNetworkPermissionHelp()
         }
 
     private var returningFromNetworkSettings = false
 
-    internal fun requestLocalNetworkPermissionIfNeeded(): Boolean {
+    private fun completeNetworkPermissionRequest() {
+        val action = pendingNetworkAction
+        pendingNetworkAction = null
+        action?.invoke()
+    }
+
+    internal fun requestLocalNetworkPermissionIfNeeded(onGranted: () -> Unit): Boolean {
         val access = app.ember.airreceiver.service.LocalNetworkAccess
         if (access.hasAccess(this)) return false
+        pendingNetworkAction = onGranted
         localNetworkPermissionRequest.launch(access.PERMISSION)
         return true
     }
@@ -75,6 +94,7 @@ class AirReceiverActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(R.string.protocol_state_permission_required)
             .setMessage(R.string.ember_local_network_permission)
+            .setOnDismissListener { if (!returningFromNetworkSettings) pendingNetworkAction = null }
             .setNegativeButton(android.R.string.cancel, null)
             .setPositiveButton(R.string.miracast_open_app_settings) { _, _ ->
                 returningFromNetworkSettings = true
@@ -88,14 +108,17 @@ class AirReceiverActivity : AppCompatActivity() {
         super.onResume()
         if (returningFromNetworkSettings) {
             returningFromNetworkSettings = false
-            ServiceController.start(this)
+            if (app.ember.airreceiver.service.LocalNetworkAccess.hasAccess(this)) completeNetworkPermissionRequest()
+            else pendingNetworkAction = null
         }
     }
 
     private val miracastPermissionRequest =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-            ServiceController.restart(this)
-            if (grants[miracastPermission] != true) {
+            val action = pendingMiracastAction
+            pendingMiracastAction = null
+            if (grants[miracastPermission] == true) action?.invoke()
+            else {
                 showMiracastPermissionHelp()
             }
         }
@@ -107,8 +130,7 @@ class AirReceiverActivity : AppCompatActivity() {
             Manifest.permission.ACCESS_FINE_LOCATION
         }
 
-    internal fun requestMiracastPermissionIfNeeded(): Boolean {
-        if (requestLocalNetworkPermissionIfNeeded()) return true
+    internal fun requestMiracastPermissionIfNeeded(onGranted: () -> Unit): Boolean {
         if (getSystemService(WIFI_P2P_SERVICE) == null ||
             ContextCompat.checkSelfPermission(this, miracastPermission) == PackageManager.PERMISSION_GRANTED
         ) return false
@@ -118,8 +140,21 @@ class AirReceiverActivity : AppCompatActivity() {
         } else {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         }
+        pendingMiracastAction = onGranted
         miracastPermissionRequest.launch(permissions)
         return true
+    }
+
+    internal fun setReceiverEnabled(protocol: Protocol, enabled: Boolean) {
+        if (!enabled) {
+            ServiceController.setReceiverEnabled(this, protocol, false)
+            return
+        }
+        val apply = { ServiceController.setReceiverEnabled(this, protocol, true) }
+        val afterNetwork = {
+            if (protocol != Protocol.MIRACAST || !requestMiracastPermissionIfNeeded(apply)) apply()
+        }
+        if (!requestLocalNetworkPermissionIfNeeded(afterNetwork)) afterNetwork()
     }
 
     private fun showMiracastPermissionHelp() {
@@ -145,6 +180,15 @@ class AirReceiverActivity : AppCompatActivity() {
     private lateinit var photoScreen: PhotoScreen
     private lateinit var nowPlayingScreen: NowPlayingScreen
     private lateinit var pinScreen: PinScreen
+    private lateinit var expandVideo: Button
+    private lateinit var waitingForVideo: TextView
+    private var displaySettings = AppSettings.DEFAULT
+    private var videoActive = false
+    private var videoExpanded = false
+    private var fullscreenDismissed = false
+    private var preview = false
+    private var audioPrompt: AlertDialog? = null
+    private var shownAudioRequest: AudioModeApproval.Request? = null
 
     // Navigation — owns the nav panel highlight and the content fragment swap.
     private lateinit var navigator: FragmentNavigator
@@ -161,17 +205,35 @@ class AirReceiverActivity : AppCompatActivity() {
         setupOverlayScreens()
         setupNavigation()
         setupServiceBinding()
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (videoActive && !preview && streamingScreen.visibility == View.VISIBLE) {
+                    videoExpanded = false
+                    fullscreenDismissed = true
+                    updateOverlay()
+                } else {
+                    isEnabled = false
+                    try { onBackPressedDispatcher.onBackPressed() } finally { isEnabled = true }
+                }
+            }
+        })
 
         // Show HomeFragment on first launch
         if (savedInstanceState == null) {
             navigator.showHome()
         }
 
-        // Start the service immediately so it's running before any sender discovers us
-        ServiceController.start(this)
-
-        // Android 13+ requires an explicit runtime grant for POST_NOTIFICATIONS
-        if (!requestLocalNetworkPermissionIfNeeded()) requestNotificationPermission()
+        if (savedInstanceState == null) {
+            lifecycleScope.launch {
+                if (SettingsRepository(this@AirReceiverActivity).settingsFlow.first().startOnLaunch) {
+                    val start = {
+                        ServiceController.start(this@AirReceiverActivity)
+                        requestNotificationPermission()
+                    }
+                    if (!requestLocalNetworkPermissionIfNeeded(start)) start()
+                }
+            }
+        }
     }
 
     override fun onStart() {
@@ -184,6 +246,9 @@ class AirReceiverActivity : AppCompatActivity() {
         super.onStop()
         // Clear surface reference before unbinding to avoid holding a dead Surface
         binder.unbind()
+        audioPrompt?.dismiss()
+        audioPrompt = null
+        shownAudioRequest = null
     }
 
     override fun onDestroy() {
@@ -218,7 +283,9 @@ class AirReceiverActivity : AppCompatActivity() {
         streamingScreen = StreamingScreen(this)
         lifecycleScope.launch {
             app.ember.airreceiver.settings.SettingsRepository(this@AirReceiverActivity).settingsFlow.collect { settings ->
+                displaySettings = settings
                 streamingScreen.setSafeArea(settings.safeAreaPercent)
+                if (::binder.isInitialized) updateOverlay()
             }
         }
         photoScreen = PhotoScreen(this)
@@ -228,6 +295,22 @@ class AirReceiverActivity : AppCompatActivity() {
         streamingContainer.addView(photoScreen)
         streamingContainer.addView(nowPlayingScreen)
         streamingContainer.addView(pinScreen)
+        waitingForVideo = TextView(this).apply {
+            setText(R.string.ember_idle_preview)
+            setTextColor(getColor(R.color.text_primary))
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+        }
+        streamingContainer.addView(waitingForVideo, FrameLayout.LayoutParams(-1, -1))
+        expandVideo = Button(this).apply {
+            setText(R.string.ember_expand_video)
+            visibility = View.GONE
+            setOnClickListener {
+                videoExpanded = true
+                updateOverlay()
+            }
+        }
+        streamingContainer.addView(expandVideo, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END))
         photoScreen.visibility = View.GONE
         nowPlayingScreen.visibility = View.GONE
         pinScreen.visibility = View.GONE
@@ -239,7 +322,9 @@ class AirReceiverActivity : AppCompatActivity() {
      * of the active item.
      */
     private fun setupNavigation() {
-        navigator = FragmentNavigator(supportFragmentManager, navItemHome, navItemSettings)
+        navigator = FragmentNavigator(supportFragmentManager, navItemHome, navItemSettings) {
+            if (::binder.isInitialized) updateOverlay()
+        }
         navigator.setupNavigation()
     }
 
@@ -254,7 +339,8 @@ class AirReceiverActivity : AppCompatActivity() {
             context = this,
             scope = lifecycleScope,
             surfaceProvider = { getVideoSurface() },
-            onStateChanged = { updateOverlay() }
+            onStateChanged = { updateOverlay() },
+            onAudioModeRequest = ::updateAudioPrompt
         )
     }
 
@@ -269,6 +355,7 @@ class AirReceiverActivity : AppCompatActivity() {
      * Hides the nav panel and content area to give the stream the full screen.
      */
     fun showStreamingScreen() {
+        setPreviewSize(false)
         photoScreen.visibility = View.GONE
         nowPlayingScreen.visibility = View.GONE
         nowPlayingScreen.clear()
@@ -280,6 +367,7 @@ class AirReceiverActivity : AppCompatActivity() {
     }
 
     fun showPhotoScreen(photoFrame: PhotoFrame) {
+        setPreviewSize(false)
         if (photoScreen.showPhoto(photoFrame.bytes)) {
             streamingScreen.visibility = View.GONE
             nowPlayingScreen.visibility = View.GONE
@@ -293,6 +381,7 @@ class AirReceiverActivity : AppCompatActivity() {
 
     /** Shows the audio-only now-playing card (AirPlay audio with no video). */
     fun showNowPlayingScreen(info: NowPlayingInfo) {
+        setPreviewSize(false)
         nowPlayingScreen.update(info)
         streamingScreen.visibility = View.GONE
         photoScreen.visibility = View.GONE
@@ -309,6 +398,7 @@ class AirReceiverActivity : AppCompatActivity() {
      * Called when a stream ends.
      */
     fun hideStreamingScreen() {
+        setPreviewSize(false)
         photoScreen.clearPhoto()
         photoScreen.visibility = View.GONE
         nowPlayingScreen.clear()
@@ -350,7 +440,7 @@ class AirReceiverActivity : AppCompatActivity() {
      * false for other keys so normal navigation is unaffected.
      */
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (::streamingScreen.isInitialized && streamingScreen.visibility == View.VISIBLE &&
+        if (!preview && ::streamingScreen.isInitialized && streamingScreen.visibility == View.VISIBLE &&
             binder.urlPlayback != null && streamingScreen.playbackControls.handleRemote(event)) return true
         return super.dispatchKeyEvent(event)
     }
@@ -363,8 +453,8 @@ class AirReceiverActivity : AppCompatActivity() {
             val command = when (keyCode) {
                 android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
                 android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
-                android.view.KeyEvent.KEYCODE_MEDIA_PAUSE,
-                android.view.KeyEvent.KEYCODE_DPAD_CENTER -> app.ember.airreceiver.airplay.nowplaying.DacpClient.CMD_PLAY_PAUSE
+                android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> app.ember.airreceiver.airplay.nowplaying.DacpClient.CMD_PLAY_PAUSE
+                android.view.KeyEvent.KEYCODE_DPAD_CENTER -> if (preview) null else app.ember.airreceiver.airplay.nowplaying.DacpClient.CMD_PLAY_PAUSE
                 android.view.KeyEvent.KEYCODE_MEDIA_NEXT,
                 android.view.KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD -> app.ember.airreceiver.airplay.nowplaying.DacpClient.CMD_NEXT
                 android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS,
@@ -431,26 +521,88 @@ class AirReceiverActivity : AppCompatActivity() {
         val photoFrame = binder.photoFrame
         val nowPlaying = binder.nowPlaying
         val pin = binder.pairingPin
+        videoActive = nowPlaying == null && (
+            binder.miracastState == ProtocolState.NEGOTIATING ||
+                binder.miracastState == ProtocolState.CONNECTED ||
+                binder.airPlayState == ProtocolState.NEGOTIATING ||
+                binder.airPlayState == ProtocolState.CONNECTED ||
+                binder.dlnaState == ProtocolState.CONNECTED
+            )
+        if (!videoActive) {
+            videoExpanded = false
+            fullscreenDismissed = false
+        }
         when {
-            // PIN pairing (access control) happens before streaming — show the code over everything.
-            pin != null -> showPinScreen(pin)
-            // Audio-only AirPlay (system audio, Music, podcasts): show the now-playing card instead
-            // of the black video surface. Set whenever audio plays without video.
+            pin != null && (displaySettings.replaceCurrentSender ||
+                (!videoActive && nowPlaying == null && photoFrame == null)) -> showPinScreen(pin)
             nowPlaying != null -> showNowPlayingScreen(nowPlaying)
             photoFrame != null -> showPhotoScreen(photoFrame)
-            binder.miracastState == ProtocolState.NEGOTIATING ||
-                binder.miracastState == ProtocolState.CONNECTED -> showStreamingScreen()
-            binder.airPlayState == ProtocolState.NEGOTIATING ||
-                binder.airPlayState == ProtocolState.CONNECTED -> showStreamingScreen()
-            binder.dlnaState == ProtocolState.CONNECTED -> showStreamingScreen()
+            videoActive && (videoExpanded || (displaySettings.autoFullscreen && !fullscreenDismissed)) -> showStreamingScreen()
+            videoActive -> showVideoPreview(active = true)
+            displaySettings.idleVideoPreview && navigator.selectedNavIndex == 0 -> showVideoPreview(active = false)
             else -> hideStreamingScreen()
         }
     }
 
+    private fun setPreviewSize(enabled: Boolean) {
+        if (preview != enabled) {
+            preview = enabled
+            val params = streamingContainer.layoutParams as ConstraintLayout.LayoutParams
+            val density = resources.displayMetrics.density
+            if (enabled) {
+                val widthDp = minOf(360, resources.configuration.screenWidthDp * 45 / 100)
+                params.width = (widthDp * density).toInt()
+                params.height = (widthDp * 9 * density / 16).toInt()
+                params.marginEnd = (16 * density).toInt()
+                params.bottomMargin = (16 * density).toInt()
+            } else {
+                params.width = FrameLayout.LayoutParams.MATCH_PARENT
+                params.height = FrameLayout.LayoutParams.MATCH_PARENT
+                params.marginEnd = 0
+                params.bottomMargin = 0
+            }
+            streamingContainer.layoutParams = params
+        }
+        if (!enabled) {
+            expandVideo.visibility = View.GONE
+            waitingForVideo.visibility = View.GONE
+        }
+    }
+
+    private fun showVideoPreview(active: Boolean) {
+        // Keep the same attached SurfaceView when switching between preview and fullscreen.
+        setPreviewSize(true)
+        photoScreen.visibility = View.GONE
+        nowPlayingScreen.visibility = View.GONE
+        pinScreen.visibility = View.GONE
+        streamingScreen.visibility = View.VISIBLE
+        streamingContainer.visibility = View.VISIBLE
+        waitingForVideo.visibility = if (active) View.GONE else View.VISIBLE
+        expandVideo.visibility = if (active) View.VISIBLE else View.GONE
+        setKeepScreenOn(active)
+    }
+
+    private fun updateAudioPrompt(request: AudioModeApproval.Request?) {
+        if (shownAudioRequest === request) return
+        audioPrompt?.dismiss()
+        audioPrompt = null
+        shownAudioRequest = request
+        if (request == null) return
+        val sender = request.sender.take(80).ifBlank { getString(R.string.ember_audio_request_sender) }
+        audioPrompt = AlertDialog.Builder(this)
+            .setTitle(R.string.ember_audio_request_title)
+            .setMessage(getString(R.string.ember_audio_request_body, sender))
+            .setPositiveButton(R.string.ember_audio_request_accept) { _, _ -> request.decide(true) }
+            .setNegativeButton(R.string.ember_audio_request_decline) { _, _ -> request.decide(false) }
+            .setOnCancelListener { request.decide(false) }
+            .show()
+    }
+
     /** Shows the AirPlay pairing PIN over the full screen during SRP pair-setup. */
     fun showPinScreen(pin: String) {
+        setPreviewSize(false)
         pinScreen.setPin(pin)
-        streamingScreen.visibility = View.GONE
+        streamingScreen.visibility = if (videoActive) View.VISIBLE else View.GONE
         photoScreen.visibility = View.GONE
         nowPlayingScreen.visibility = View.GONE
         pinScreen.visibility = View.VISIBLE

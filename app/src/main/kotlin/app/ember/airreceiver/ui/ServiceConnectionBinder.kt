@@ -49,12 +49,13 @@ internal class ServiceConnectionBinder(
     /** Supplies the video Surface to the service (null while no Surface exists). */
     private val surfaceProvider: () -> Surface?,
     /** Called after every mirrored state change. */
-    private val onStateChanged: () -> Unit
+    private val onStateChanged: () -> Unit,
+    private val onAudioModeRequest: (app.ember.airreceiver.service.AudioModeApproval.Request?) -> Unit
 ) {
 
     // The bound service — null while the Activity is not bound.
     private var service: AirReceiverService? = null
-    private var playbackObserver: kotlinx.coroutines.Job? = null
+    private var stateObserver: kotlinx.coroutines.Job? = null
     var urlPlayback: app.ember.airreceiver.airplay.playback.PlaybackInfo? = null
         private set
 
@@ -98,8 +99,8 @@ internal class ServiceConnectionBinder(
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            playbackObserver?.cancel()
-            playbackObserver = null
+            stateObserver?.cancel()
+            stateObserver = null
             urlPlayback = null
             onStateChanged()
             service = null
@@ -126,8 +127,8 @@ internal class ServiceConnectionBinder(
      * stay referenced by the service, otherwise the decoder writes into a dead buffer.
      */
     fun unbind() {
-        playbackObserver?.cancel()
-        playbackObserver = null
+        stateObserver?.cancel()
+        stateObserver = null
         urlPlayback = null
         service?.setVideoSurfaceProvider { null }
         if (isBound) {
@@ -173,51 +174,54 @@ internal class ServiceConnectionBinder(
      */
     private fun observeState() {
         val svc = service ?: return
-        playbackObserver?.cancel()
-        playbackObserver = scope.launch {
-            svc.airPlayUrlPlayback.collectLatest { info ->
-                urlPlayback = info?.takeIf {
-                    it.phase != app.ember.airreceiver.airplay.playback.PlaybackPhase.ENDED &&
-                        it.phase != app.ember.airreceiver.airplay.playback.PlaybackPhase.FAILED
+        stateObserver?.cancel()
+        stateObserver = scope.launch {
+            launch {
+                svc.airPlayUrlPlayback.collectLatest { info ->
+                    urlPlayback = info?.takeIf {
+                        it.phase != app.ember.airreceiver.airplay.playback.PlaybackPhase.ENDED &&
+                            it.phase != app.ember.airreceiver.airplay.playback.PlaybackPhase.FAILED
+                    }
+                    onStateChanged()
                 }
-                onStateChanged()
             }
-        }
-        scope.launch {
-            svc.airPlayState.collectLatest { state ->
-                airPlayState = state
-                onStateChanged()
+            launch {
+                svc.airPlayState.collectLatest { state ->
+                    airPlayState = state
+                    onStateChanged()
+                }
             }
-        }
-        scope.launch {
-            svc.miracastState.collectLatest { state ->
-                miracastState = state
-                onStateChanged()
+            launch {
+                svc.miracastState.collectLatest { state ->
+                    miracastState = state
+                    onStateChanged()
+                }
             }
-        }
-        scope.launch {
-            svc.dlnaState.collectLatest { state ->
-                dlnaState = state
-                onStateChanged()
+            launch {
+                svc.dlnaState.collectLatest { state ->
+                    dlnaState = state
+                    onStateChanged()
+                }
             }
-        }
-        scope.launch {
-            svc.photoFrame.collectLatest { frame ->
-                photoFrame = frame
-                onStateChanged()
+            launch {
+                svc.photoFrame.collectLatest { frame ->
+                    photoFrame = frame
+                    onStateChanged()
+                }
             }
-        }
-        scope.launch {
-            svc.nowPlaying.collectLatest { info ->
-                nowPlaying = info
-                onStateChanged()
+            launch {
+                svc.nowPlaying.collectLatest { info ->
+                    nowPlaying = info
+                    onStateChanged()
+                }
             }
-        }
-        scope.launch {
-            svc.pairingPin.collectLatest { pin ->
-                pairingPin = pin
-                onStateChanged()
+            launch {
+                svc.pairingPin.collectLatest { pin ->
+                    pairingPin = pin
+                    onStateChanged()
+                }
             }
+            launch { svc.audioModeRequest.collectLatest(onAudioModeRequest) }
         }
     }
 }

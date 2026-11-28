@@ -23,7 +23,10 @@ import com.google.android.gms.cast.tv.media.MediaManager
 import com.google.android.gms.tasks.Task
 import com.google.android.gms.tasks.TaskCompletionSource
 import com.google.android.gms.tasks.Tasks
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 /** Owns the playback surface and publishes transport controls for the current sender load. */
@@ -34,6 +37,14 @@ class EmberPlaybackActivity : FragmentActivity() {
     private var video: VideoView? = null
     private var pending: TaskCompletionSource<MediaLoadRequestData>? = null
     private var playWhenReady = true
+    private var admittingLoad = false
+    private val ownership = PlaybackOwnership.shared
+    private val closePlayback: () -> Unit = {
+        runOnUiThread {
+            stopPlayback()
+            finish()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,7 +73,7 @@ class EmberPlaybackActivity : FragmentActivity() {
         })
         lifecycleScope.launch {
             if (!app.ember.airreceiver.service.LocalNetworkAccess.hasAccess(this@EmberPlaybackActivity) ||
-                !CastReceiver.isConfigured() || !SettingsRepository(applicationContext).settingsFlow.first().castEnabled) {
+                !CastReceiver.isRunning || !SettingsRepository(applicationContext).settingsFlow.first().castEnabled) {
                 finish()
                 return@launch
             }
@@ -78,7 +89,7 @@ class EmberPlaybackActivity : FragmentActivity() {
     private fun attachReceiver() {
         CastReceiverContext.initInstance(applicationContext)
         val receiver = CastReceiverContext.getInstance()
-        receiver.start()
+        CastReceiver.stopExternalPlayback = closePlayback
         manager = receiver.mediaManager.apply {
             setSessionCompatToken(session.sessionToken)
             setMediaLoadCommandCallback(object : MediaLoadCommandCallback() {
@@ -102,11 +113,36 @@ class EmberPlaybackActivity : FragmentActivity() {
         if (url == null || !FetchableUrlPolicy.isFetchable(url)) {
             return Tasks.forException(IllegalArgumentException(getString(R.string.ember_load_failed)))
         }
-        if (!PlaybackOwnership.acquire(this)) {
-            return Tasks.forException(IllegalStateException(getString(R.string.ember_receiver_busy)))
-        }
-        stopPlayback(releaseOwnership = false)
         val result = TaskCompletionSource<MediaLoadRequestData>()
+        lifecycleScope.launch {
+            if (!CastReceiver.isRunning || admittingLoad) {
+                result.trySetException(IllegalStateException(getString(R.string.ember_receiver_busy)))
+                return@launch
+            }
+            admittingLoad = true
+            var acquired = false
+            try {
+                withContext(NonCancellable + Dispatchers.IO) {
+                    acquired = ownership.acquire(this@EmberPlaybackActivity, disconnect = closePlayback)
+                }
+                if (!acquired || !CastReceiver.isRunning || isDestroyed || isFinishing) {
+                    if (acquired) ownership.release(this@EmberPlaybackActivity)
+                    result.trySetException(IllegalStateException(getString(R.string.ember_receiver_busy)))
+                } else {
+                    startPlayback(request, url, result)
+                }
+            } catch (error: Exception) {
+                if (acquired) ownership.release(this@EmberPlaybackActivity)
+                result.trySetException(error)
+            } finally {
+                admittingLoad = false
+            }
+        }
+        return result.task
+    }
+
+    private fun startPlayback(request: MediaLoadRequestData, url: String, result: TaskCompletionSource<MediaLoadRequestData>) {
+        stopPlayback(releaseOwnership = false)
         pending = result
         val view = VideoView(this)
         video = view
@@ -134,7 +170,7 @@ class EmberPlaybackActivity : FragmentActivity() {
                 val message = getString(R.string.ember_load_failed)
                 result.trySetException(IllegalStateException(message))
                 pending = null
-                PlaybackOwnership.release(this)
+                ownership.release(this)
                 EmberMediaSession.externalPlaybackActive = false
                 publish(PlaybackStateCompat.STATE_ERROR)
                 Toast.makeText(this, message, Toast.LENGTH_LONG).show()
@@ -142,7 +178,6 @@ class EmberPlaybackActivity : FragmentActivity() {
             true
         }
         view.setVideoURI(Uri.parse(url))
-        return result.task
     }
 
     private fun publish(state: Int, position: Long = video?.currentPosition?.toLong() ?: 0L) {
@@ -154,7 +189,6 @@ class EmberPlaybackActivity : FragmentActivity() {
     }
 
     private fun stopPlayback(releaseOwnership: Boolean = true) {
-        if (releaseOwnership) PlaybackOwnership.release(this)
         EmberMediaSession.externalPlaybackActive = false
         pending?.trySetException(IllegalStateException(getString(R.string.ember_load_replaced)))
         pending = null
@@ -163,9 +197,11 @@ class EmberPlaybackActivity : FragmentActivity() {
         old?.stopPlayback()
         container.removeAllViews()
         publish(PlaybackStateCompat.STATE_STOPPED)
+        if (releaseOwnership) ownership.release(this)
     }
 
     override fun onDestroy() {
+        if (CastReceiver.stopExternalPlayback === closePlayback) CastReceiver.stopExternalPlayback = null
         stopPlayback()
         manager?.setMediaLoadCommandCallback(MediaLoadCommandCallback())
         manager?.setSessionCompatToken(null)

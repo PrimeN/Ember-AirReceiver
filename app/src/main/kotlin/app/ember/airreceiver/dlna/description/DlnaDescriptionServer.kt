@@ -271,7 +271,8 @@ class DlnaDescriptionServer internal constructor(
         val result = soapDispatcher.dispatch(
             controlPath = request.path.substringBefore('?'),
             soapAction = request.headers["soapaction"],
-            body = request.body
+            body = request.body,
+            sender = client.inetAddress
         )
         DlnaHttpResponses.write(
             client.outputStream,

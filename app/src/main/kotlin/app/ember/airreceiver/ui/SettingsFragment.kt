@@ -23,6 +23,7 @@ import app.ember.airreceiver.AirReceiverActivity
 import app.ember.airreceiver.BuildConfig
 import app.ember.airreceiver.R
 import app.ember.airreceiver.airplay.StreamStats
+import app.ember.airreceiver.service.Protocol
 import app.ember.airreceiver.service.ServiceController
 import app.ember.airreceiver.settings.AppSettings
 import app.ember.airreceiver.settings.SettingsRepository
@@ -64,12 +65,15 @@ class SettingsFragment : Fragment() {
     private lateinit var rowDlna: View
     private lateinit var rowLowBandwidth: View
     private lateinit var rowAudioOnly: View
-    private lateinit var rowProtectPlayback: View
+    private lateinit var rowSenderHandoff: View
     private lateinit var rowMirrorAudio: View
-    private lateinit var rowPinAuth: View
+    private lateinit var receiverOptions: ReceiverOptions
+    private lateinit var rowIdlePreview: View
+    private lateinit var rowAutoFullscreen: View
+    private lateinit var rowAutoAudioMode: View
+    private lateinit var rowStartOnLaunch: View
     private lateinit var rowStartOnBoot: View
     private lateinit var rowDebugOverlay: View
-    private lateinit var rowForceHighRes: View
     private lateinit var textVersionValue: TextView
     private lateinit var rowDiagnostics: View
     private lateinit var rowPrivacy: View
@@ -108,12 +112,15 @@ class SettingsFragment : Fragment() {
         rowDlna             = view.findViewById(R.id.row_dlna)
         rowLowBandwidth = view.findViewById(R.id.row_low_bandwidth)
         rowAudioOnly = view.findViewById(R.id.row_airplay_audio_only)
-        rowProtectPlayback = view.findViewById(R.id.row_protect_playback)
+        rowSenderHandoff = view.findViewById(R.id.row_sender_handoff)
         rowMirrorAudio      = view.findViewById(R.id.row_mirror_audio)
-        rowPinAuth          = view.findViewById(R.id.row_pin_auth)
+        receiverOptions = ReceiverOptions(view, ::save)
+        rowIdlePreview = view.findViewById(R.id.row_idle_preview)
+        rowAutoFullscreen = view.findViewById(R.id.row_auto_fullscreen)
+        rowAutoAudioMode = view.findViewById(R.id.row_auto_audio_mode)
+        rowStartOnLaunch    = view.findViewById(R.id.row_start_on_launch)
         rowStartOnBoot      = view.findViewById(R.id.row_start_on_boot)
         rowDebugOverlay     = view.findViewById(R.id.row_debug_overlay)
-        rowForceHighRes     = view.findViewById(R.id.row_force_high_res)
         textVersionValue    = view.findViewById(R.id.text_version_value)
         rowDiagnostics      = view.findViewById(R.id.row_diagnostics)
         rowPrivacy          = view.findViewById(R.id.row_privacy)
@@ -138,12 +145,14 @@ class SettingsFragment : Fragment() {
         configureToggleRow(rowDlna,         R.string.setting_dlna_enabled,       R.string.setting_dlna_subtitle)
         configureToggleRow(rowLowBandwidth, R.string.setting_low_bandwidth, R.string.setting_low_bandwidth_detail)
         configureToggleRow(rowAudioOnly, R.string.setting_airplay_audio_only, R.string.setting_airplay_audio_only_detail)
-        configureToggleRow(rowProtectPlayback, R.string.setting_protect_playback, R.string.setting_protect_playback_detail)
+        configureToggleRow(rowSenderHandoff, R.string.setting_sender_handoff, R.string.setting_sender_handoff_detail)
         configureToggleRow(rowMirrorAudio,  R.string.setting_mirror_audio,       R.string.setting_mirror_audio_subtitle)
-        configureToggleRow(rowPinAuth,      R.string.setting_pin_auth,           R.string.setting_pin_auth_subtitle)
+        configureToggleRow(rowIdlePreview, R.string.setting_idle_preview, R.string.setting_idle_preview_detail)
+        configureToggleRow(rowAutoFullscreen, R.string.setting_auto_fullscreen, R.string.setting_auto_fullscreen_detail)
+        configureToggleRow(rowAutoAudioMode, R.string.setting_auto_audio_mode, R.string.setting_auto_audio_mode_detail)
+        configureToggleRow(rowStartOnLaunch, R.string.setting_start_on_launch, R.string.setting_start_on_launch_detail)
         configureToggleRow(rowStartOnBoot,  R.string.setting_start_on_boot,      0)
         configureToggleRow(rowDebugOverlay, R.string.setting_debug_overlay,      R.string.setting_debug_overlay_subtitle)
-        configureToggleRow(rowForceHighRes, R.string.setting_force_high_res,      R.string.setting_force_high_res_subtitle)
 
         textVersionValue.text = BuildConfig.VERSION_NAME
     }
@@ -191,12 +200,14 @@ class SettingsFragment : Fragment() {
         setToggle(rowDlna,         settings.dlnaEnabled)
         setToggle(rowLowBandwidth, settings.lowBandwidthMirroring)
         setToggle(rowAudioOnly, settings.airPlayAudioOnly)
-        setToggle(rowProtectPlayback, settings.protectPlayback)
+        setToggle(rowSenderHandoff, settings.replaceCurrentSender)
         setToggle(rowMirrorAudio,  settings.mirrorAudioEnabled)
-        setToggle(rowPinAuth,      settings.airPlayPinAuthEnabled)
+        setToggle(rowIdlePreview, settings.idleVideoPreview)
+        setToggle(rowAutoFullscreen, settings.autoFullscreen)
+        setToggle(rowAutoAudioMode, settings.autoAudioMode)
+        setToggle(rowStartOnLaunch, settings.startOnLaunch)
         setToggle(rowStartOnBoot,  settings.startOnBoot)
         setToggle(rowDebugOverlay, settings.showDebugOverlay)
-        setToggle(rowForceHighRes, settings.forceHighResolution)
     }
 
     private fun setToggle(row: View, value: Boolean) {
@@ -213,30 +224,37 @@ class SettingsFragment : Fragment() {
     private fun setupListeners() {
         rowDisplayName.setOnClickListener { showDisplayNameDialog() }
 
-        // Protocol switches and the display name are read by the receivers only at start-up.
-        // Persisting them alone leaves the running service on the old configuration, so the
-        // switch shows "on" while the receiver is still off — exactly the "it says disabled
-        // even though it's switched on" confusion from issue #18. Every setting that the
-        // receivers read at start-up therefore restarts the service.
-        setToggleListener(rowAirPlay)      { enabled -> saveAndRestart { it.copy(airPlayEnabled = enabled) } }
-        setToggleListener(rowMiracast) { enabled ->
-            viewLifecycleOwner.lifecycleScope.launch {
-                if (!settingsRepository.update { it.copy(miracastEnabled = enabled) }) {
-                    setToggle(rowMiracast, settingsRepository.settingsFlow.first().miracastEnabled)
-                    return@launch
-                }
-                if (!enabled || (activity as? AirReceiverActivity)?.requestMiracastPermissionIfNeeded() != true) {
-                    ServiceController.restart(requireContext())
-                }
+        val receiverRows = mapOf(
+            Protocol.AIRPLAY to rowAirPlay, Protocol.MIRACAST to rowMiracast,
+            Protocol.CAST to rowCast, Protocol.DLNA to rowDlna
+        )
+        receiverRows.forEach { (protocol, row) ->
+            if (protocol == Protocol.CAST && BuildConfig.FLAVOR != "googletv") {
+                row.visibility = View.GONE
+                return@forEach
+            }
+            setToggleListener(row) { enabled ->
+                setToggle(row, !enabled)
+                (activity as? AirReceiverActivity)?.setReceiverEnabled(protocol, enabled)
             }
         }
-        setToggleListener(rowCast)         { enabled -> saveAndRestart { it.copy(castEnabled = enabled) } }
-        setToggleListener(rowDlna)         { enabled -> saveAndRestart { it.copy(dlnaEnabled = enabled) } }
-        setToggleListener(rowLowBandwidth) { enabled -> saveAndRestart { it.copy(lowBandwidthMirroring = enabled) } }
+        viewLifecycleOwner.lifecycleScope.launch {
+            settingsRepository.settingsFlow.collect { settings ->
+                receiverRows.forEach { (protocol, row) -> setToggle(row, settings.isEnabled(protocol)) }
+                val format = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    app.ember.airreceiver.airplay.mirror.MirrorCapabilities.resolve(receiverOptions.context.applicationContext, settings)
+                }
+                receiverOptions.render(settings, format)
+            }
+        }
+        setToggleListener(rowLowBandwidth) { enabled -> save { it.copy(lowBandwidthMirroring = enabled) } }
         setToggleListener(rowAudioOnly) { enabled -> saveAndRestart { it.copy(airPlayAudioOnly = enabled) } }
-        setToggleListener(rowProtectPlayback) { enabled -> saveAndRestart { it.copy(protectPlayback = enabled) } }
+        setToggleListener(rowSenderHandoff) { enabled -> save { it.copy(replaceCurrentSender = enabled) } }
         setToggleListener(rowMirrorAudio)  { enabled -> saveAndRestart { it.copy(mirrorAudioEnabled = enabled) } }
-        setToggleListener(rowPinAuth)      { enabled -> saveAndRestart { it.copy(airPlayPinAuthEnabled = enabled) } }
+        setToggleListener(rowIdlePreview) { enabled -> save { it.copy(idleVideoPreview = enabled) } }
+        setToggleListener(rowAutoFullscreen) { enabled -> save { it.copy(autoFullscreen = enabled) } }
+        setToggleListener(rowAutoAudioMode) { enabled -> save { it.copy(autoAudioMode = enabled) } }
+        setToggleListener(rowStartOnLaunch) { enabled -> save { it.copy(startOnLaunch = enabled) } }
         setToggleListener(rowStartOnBoot)  { enabled -> save { it.copy(startOnBoot = enabled) } }
         setToggleListener(rowDebugOverlay) { enabled ->
             viewLifecycleOwner.lifecycleScope.launch {
@@ -247,16 +265,6 @@ class SettingsFragment : Fragment() {
                 }
             }
         }
-        setToggleListener(rowForceHighRes) { enabled ->
-            viewLifecycleOwner.lifecycleScope.launch {
-                if (settingsRepository.update { it.copy(forceHighResolution = enabled) }) {
-                    (activity as? AirReceiverActivity)?.restartRunningReceivers()
-                } else {
-                    setToggle(rowForceHighRes, settingsRepository.settingsFlow.first().forceHighResolution)
-                }
-            }
-        }
-
         requireView().findViewById<View>(R.id.row_safe_area).setOnClickListener { showSafeArea() }
         rowDiagnostics.setOnClickListener { openDiagnostics() }
         rowPrivacy.setOnClickListener { openPrivacyPolicy() }

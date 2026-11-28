@@ -14,12 +14,14 @@ import app.ember.airreceiver.airplay.nowplaying.NowPlayingInfo
 import app.ember.airreceiver.media.MediaCapabilities
 import app.ember.airreceiver.settings.SettingsRepository
 import app.ember.airreceiver.util.Logger
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -62,12 +64,17 @@ class AirReceiverService : Service() {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
 
+    private var lastStartId = 0
+    private val commands = Channel<Pair<Intent?, Int>>(Channel.UNLIMITED)
+
     // Observable state — the flows themselves live in the state bus, this class publishes them.
     private val stateBus = ServiceStateBus()
 
     // Local aliases for the shared state flows (the service code below uses the original names).
     private val _serviceState = stateBus.serviceStateFlow
     private val _activeConnection = stateBus.activeConnectionFlow
+
+    internal fun receiverState(protocol: Protocol): StateFlow<ProtocolState> = stateBus.protocolState(protocol)
 
     val serviceState: StateFlow<ServiceState> = stateBus.serviceState
     val airPlayState: StateFlow<ProtocolState> = stateBus.airPlayState
@@ -97,6 +104,7 @@ class AirReceiverService : Service() {
     // Network monitor — re-advertises over mDNS after a network outage.
     private lateinit var mediaControls: EmberMediaSession
     private val urlPlayback = MutableStateFlow<PlaybackInfo?>(null)
+    internal val audioModeRequest get() = receivers.audioApproval.request
     internal val airPlayUrlPlayback = urlPlayback.asStateFlow()
     private lateinit var networkRecovery: NetworkRecoveryMonitor
 
@@ -120,9 +128,12 @@ class AirReceiverService : Service() {
             isServiceRunning = { stateBus.serviceState.value == ServiceState.Running },
             onNetworkRestored = {
                 if (LocalNetworkAccess.hasAccess(this)) receivers.readvertiseAll()
-                else serviceScope.launch { startReceivers() }
+
             }
         )
+        serviceScope.launch {
+            settingsRepository.settingsFlow.collect { receivers.updatePreferences(it) }
+        }
         mediaControls = EmberMediaSession(this, ::setAirPlayUrlRate, ::seekAirPlayUrl, ::stopAirPlayUrl, ::sendAirPlayRemoteCommand)
         serviceScope.launch {
             while (isActive) {
@@ -135,20 +146,46 @@ class AirReceiverService : Service() {
                 delay(350)
             }
         }
+        serviceScope.launch {
+            combine(airPlayState, miracastState, castState, dlnaState) { airPlay, miracast, cast, dlna ->
+                listOf(airPlay, miracast, cast, dlna).any(ProtocolState::isServing)
+            }.collect { serving ->
+                _serviceState.compareAndSet(if (serving) ServiceState.Stopped else ServiceState.Running,
+                    if (serving) ServiceState.Running else ServiceState.Stopped)
+            }
+        }
+        serviceScope.launch {
+            for ((intent, startId) in commands) {
+                when (intent?.action) {
+                    ACTION_STOP -> stopReceivers()
+                    ACTION_RESTART -> restartReceivers()
+                    ACTION_SET_RECEIVER -> applyReceiverCommand(intent)
+                    else -> startReceivers()
+                }
+                if (!receivers.hasReceivers) {
+                    withContext(Dispatchers.Main) {
+                        if (stopSelfResult(startId)) {
+                            @Suppress("DEPRECATION")
+                            stopForeground(true)
+                        }
+                    }
+                }
+            }
+        }
         notifications.createNotificationChannel()
         networkRecovery.registerNetworkCallback()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Promote to foreground immediately with a persistent notification
-        startForeground(NOTIFICATION_ID, notifications.buildNotification(isRunning = false))
-
-        when (intent?.action) {
-            ACTION_START   -> serviceScope.launch { startReceivers() }
-            ACTION_STOP    -> serviceScope.launch { stopReceivers(); stopSelf() }
-            ACTION_RESTART -> serviceScope.launch { restartReceivers() }
-            else           -> serviceScope.launch { startReceivers() } // default: start
-        }
+        startForeground(NOTIFICATION_ID, notifications.buildNotification(
+            isRunning = _serviceState.value == ServiceState.Running,
+            notificationContentText = _activeConnection.value?.senderName?.let {
+                getString(app.ember.airreceiver.R.string.notification_status_streaming, it)
+            }
+        ))
+        lastStartId = startId
+        commands.trySend(intent to startId)
 
         // START_STICKY: if the system kills the service, restart it with a null intent
         return START_STICKY
@@ -163,8 +200,7 @@ class AirReceiverService : Service() {
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         Logger.i("App task removed — stopping receivers + service")
-        stopReceivers()
-        stopSelf()
+        commands.trySend(Intent(ACTION_STOP) to lastStartId)
         super.onTaskRemoved(rootIntent)
     }
 
@@ -221,8 +257,8 @@ class AirReceiverService : Service() {
     override fun onDestroy() {
         Logger.i("AirReceiverService destroying")
         networkRecovery.unregisterNetworkCallback()
-        receivers.stopAllReceiversInternal()
         serviceJob.cancel()
+        receivers.close()
         mediaControls.release()
         super.onDestroy()
     }
@@ -237,32 +273,47 @@ class AirReceiverService : Service() {
      */
     private suspend fun startReceivers() {
         val settings = settingsRepository.settingsFlow.first()
-        PlaybackOwnership.enabled = settings.protectPlayback
+        receivers.updatePreferences(settings)
         Logger.i(
             "Starting receivers: AirPlay=${settings.airPlayEnabled}, " +
                 "Miracast=${settings.miracastEnabled}, Cast=${settings.castEnabled}, " +
                 "DLNA=${settings.dlnaEnabled}"
         )
-        if (!LocalNetworkAccess.hasAccess(this)) {
-            receivers.stopAllReceiversInternal()
-            fun required(enabled: Boolean) = if (enabled) ProtocolState.PERMISSION_REQUIRED else ProtocolState.DISABLED
-            stateBus.airPlayStateFlow.value = required(settings.airPlayEnabled)
-            stateBus.miracastStateFlow.value = required(settings.miracastEnabled)
-            stateBus.castStateFlow.value = required(settings.castEnabled && app.ember.airreceiver.BuildConfig.FLAVOR == "googletv")
-            stateBus.dlnaStateFlow.value = required(settings.dlnaEnabled)
-            _serviceState.value = ServiceState.Stopped
-            notifications.updateNotification(isRunning = false)
+        if (LocalNetworkAccess.hasAccess(this) && !receivers.hasReceivers) logMediaCapabilities()
+        Protocol.entries.filter(settings::isEnabled).forEach { startReceiver(it, settings) }
+        updateReceiverStatus()
+    }
+
+    private suspend fun applyReceiverCommand(intent: Intent) {
+        val protocol = Protocol.entries.firstOrNull { it.name == intent.getStringExtra(EXTRA_PROTOCOL) } ?: return
+        val enabled = intent.getBooleanExtra(EXTRA_ENABLED, false)
+        if (!settingsRepository.update { it.withReceiverEnabled(protocol, enabled) }) {
+            withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(this@AirReceiverService,
+                    app.ember.airreceiver.R.string.settings_save_error, android.widget.Toast.LENGTH_SHORT).show()
+            }
             return
         }
-        logMediaCapabilities()
+        if (enabled) {
+            val settings = settingsRepository.settingsFlow.first()
+            receivers.updatePreferences(settings)
+            startReceiver(protocol, settings)
+        }
+        else receivers.stop(protocol)
+        updateReceiverStatus()
+    }
 
-        _serviceState.value = ServiceState.Running
-        notifications.updateNotification(isRunning = true)
+    private fun startReceiver(protocol: Protocol, settings: app.ember.airreceiver.settings.AppSettings) {
+        if (protocol == Protocol.CAST && app.ember.airreceiver.BuildConfig.FLAVOR != "googletv") return
+        if (LocalNetworkAccess.hasAccess(this)) receivers.start(protocol, settings)
+        else stateBus.protocolState(protocol).value = ProtocolState.PERMISSION_REQUIRED
+    }
 
-        if (settings.airPlayEnabled)   receivers.startAirPlay(settings)
-        if (settings.miracastEnabled)  receivers.startMiracast()
-        if (settings.castEnabled)      receivers.startCast()
-        if (settings.dlnaEnabled)      receivers.startDlna(settings)
+    private fun updateReceiverStatus() {
+        _serviceState.value = if (Protocol.entries.any { receiverState(it).value.isServing }) {
+            ServiceState.Running
+        } else ServiceState.Stopped
+        receivers.updateNotification()
     }
 
     private fun logMediaCapabilities() {
@@ -341,5 +392,8 @@ class AirReceiverService : Service() {
         const val ACTION_START    = "app.ember.airreceiver.action.START"
         const val ACTION_STOP     = "app.ember.airreceiver.action.STOP"
         const val ACTION_RESTART  = "app.ember.airreceiver.action.RESTART"
+        const val ACTION_SET_RECEIVER = "app.ember.airreceiver.action.SET_RECEIVER"
+        const val EXTRA_PROTOCOL = "protocol"
+        const val EXTRA_ENABLED = "enabled"
     }
 }

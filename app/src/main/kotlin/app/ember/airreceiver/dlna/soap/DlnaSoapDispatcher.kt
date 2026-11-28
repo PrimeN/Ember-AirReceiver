@@ -55,7 +55,7 @@ class DlnaSoapDispatcher internal constructor(
      * @param body the SOAP envelope.
      * @return the answer to send back to the control point.
      */
-    fun dispatch(controlPath: String, soapAction: String?, body: String): SoapResult {
+    fun dispatch(controlPath: String, soapAction: String?, body: String, sender: java.net.InetAddress? = null): SoapResult {
         val requestedAction = soapAction
             ?.substringAfter('#')
             ?.trim('"')
@@ -73,7 +73,7 @@ class DlnaSoapDispatcher internal constructor(
             val values = SecureSoapXml.directChildText(document, action)
             when (controlPath.substringBefore('?')) {
                 CONNECTION_MANAGER_PATH -> connectionManager(action)
-                AV_TRANSPORT_PATH -> avTransport.handle(action, values)
+                AV_TRANSPORT_PATH -> avTransport.handle(action, values, sender)
                 RENDERING_CONTROL_PATH -> renderingControl(action, values)
                 else -> SoapResult(
                     statusCode = 404,

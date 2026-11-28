@@ -2,6 +2,16 @@
 // Licensed under the Apache License, Version 2.0 — see LICENSE and NOTICE.
 package app.ember.airreceiver.settings
 
+import app.ember.airreceiver.service.Protocol
+
+enum class AirPlayPinPolicy { OFF, REMEMBER, EACH_SESSION }
+
+enum class MirrorResolution(val width: Int, val height: Int) {
+    AUTO(0, 0), HD(1280, 720), FULL_HD(1920, 1080), QHD(2560, 1440), UHD(3840, 2160), CUSTOM(0, 0)
+}
+
+data class MirrorFormat(val width: Int, val height: Int, val fps: Int, val hevc: Boolean = false)
+
 /**
  * AppSettings — Immutable data model for all user-configurable Ember AirReceiver settings.
  *
@@ -94,11 +104,26 @@ data class AppSettings(
     val lowBandwidthMirroring: Boolean = false,
     val airPlayAudioOnly: Boolean = false,
     val safeAreaPercent: Int = 0,
-    val protectPlayback: Boolean = false,
 
     /** Whether to accept companion audio for mirroring. */
-    val mirrorAudioEnabled: Boolean = true
+    val mirrorAudioEnabled: Boolean = true,
+    val startOnLaunch: Boolean = true,
+    val airPlayPinPolicy: AirPlayPinPolicy? = null,
+    val mirrorResolution: MirrorResolution? = null,
+    val customMirrorWidth: Int = 1920,
+    val customMirrorHeight: Int = 1080,
+    val maxMirrorFps: Int = 0,
+    val replaceCurrentSender: Boolean = false,
+    val idleVideoPreview: Boolean = false,
+    val autoFullscreen: Boolean = true,
+    val autoAudioMode: Boolean = true
 ) {
+
+    val effectivePinPolicy: AirPlayPinPolicy
+        get() = airPlayPinPolicy ?: if (airPlayPinAuthEnabled) AirPlayPinPolicy.REMEMBER else AirPlayPinPolicy.OFF
+
+    val effectiveMirrorResolution: MirrorResolution
+        get() = mirrorResolution ?: if (forceHighResolution) MirrorResolution.QHD else MirrorResolution.FULL_HD
 
     val mirrorWidth: Int get() = when {
         lowBandwidthMirroring -> 1280
@@ -125,6 +150,20 @@ data class AppSettings(
      */
     val anyProtocolEnabled: Boolean
         get() = airPlayEnabled || miracastEnabled || castEnabled || dlnaEnabled
+
+    internal fun isEnabled(protocol: Protocol): Boolean = when (protocol) {
+        Protocol.AIRPLAY -> airPlayEnabled
+        Protocol.MIRACAST -> miracastEnabled
+        Protocol.CAST -> castEnabled
+        Protocol.DLNA -> dlnaEnabled
+    }
+
+    internal fun withReceiverEnabled(protocol: Protocol, enabled: Boolean): AppSettings = when (protocol) {
+        Protocol.AIRPLAY -> copy(airPlayEnabled = enabled)
+        Protocol.MIRACAST -> copy(miracastEnabled = enabled)
+        Protocol.CAST -> copy(castEnabled = enabled)
+        Protocol.DLNA -> copy(dlnaEnabled = enabled)
+    }
 
     companion object {
         /** The default settings instance used on first launch. */

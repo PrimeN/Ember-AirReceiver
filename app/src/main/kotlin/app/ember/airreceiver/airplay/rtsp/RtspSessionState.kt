@@ -37,6 +37,9 @@ internal class RtspSessionState {
     @Volatile var fairPlay: FairPlay? = null
 
     /** Per-connection AirPlay pairing state (pair-setup / pair-verify). */
+    var mirrorKeysReady = false
+    var audioModeApproved = false
+
     @Volatile var pairingSession: PairingSession? = null
 
     /** Remote (sender) address of the active control connection — needed for AirPlay 2 NTP. */

@@ -16,12 +16,15 @@ import app.ember.airreceiver.airplay.rtsp.SessionDescription
 import app.ember.airreceiver.airplay.timing.TimingHandler
 import app.ember.airreceiver.service.ProtocolState
 import app.ember.airreceiver.util.Logger
+import app.ember.airreceiver.settings.AirPlayPinPolicy
+import app.ember.airreceiver.settings.MirrorFormat
 import app.ember.airreceiver.util.releaseQuietly
 import app.ember.airreceiver.util.rethrowIfCancellation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -74,6 +77,11 @@ class AirPlayReceiver(
     private val audioEnabled: Boolean = false,
     /** Require HomeKit-style SRP PIN pairing before streaming (AppSettings.airPlayPinAuthEnabled). */
     private val pinAuthEnabled: Boolean = false,
+    private val preferredPinPolicy: () -> AirPlayPinPolicy = {
+        if (pinAuthEnabled) AirPlayPinPolicy.REMEMBER else AirPlayPinPolicy.OFF
+    },
+    private val preferredMirrorFormat: (() -> MirrorFormat)? = null,
+    private val approveAudioOnly: (String) -> Boolean = { true },
     /** Lazy Surface provider — called only for video streams when RECORD arrives. */
     private val videoSurfaceProvider: () -> Surface?,
     private val onStateChanged: (ProtocolState) -> Unit,
@@ -155,6 +163,12 @@ class AirPlayReceiver(
         !audioOnlyMode && app.ember.airreceiver.airplay.mirror.MirrorCapabilities.supportsHevc(mirrorWidth, mirrorHeight, advertisedFps)
     }
 
+    @Volatile private var sessionFormat: MirrorFormat? = null
+    private var sessionPinPolicy = preferredPinPolicy()
+
+    private fun currentMirrorFormat(): MirrorFormat =
+        sessionFormat ?: MirrorFormat(mirrorWidth, mirrorHeight, advertisedFps, hevcEnabled)
+
     // AirPlay 2 mirroring: keys, event channel, NTP, mirror data/audio servers.
     private val mirrorSession = AirPlayMirrorSession(
         scope = scope,
@@ -166,6 +180,7 @@ class AirPlayReceiver(
         onVideoSessionChanged = { hasVideo -> onVideoSessionChanged(hasVideo) },
         hevcEnabled = hevcEnabled,
         advertisedFps = advertisedFps,
+        mirrorFormat = ::currentMirrorFormat,
         onStateChanged = ::emitState,
         onVideoFailure = { reason ->
             sessionProgress.fail(reason)
@@ -198,16 +213,20 @@ class AirPlayReceiver(
         // line of defence is in place — but the name does not belong in a log excerpt
         // that may end up in a public issue tracker.
         Logger.i("AirPlayReceiver starting")
-        scope.launch {
-            try {
-                startTimingHandler()
-                startMdnsService()
-                startRtspHandler()
-            } catch (e: Exception) {
-                e.rethrowIfCancellation()
-                Logger.e("Failed to start AirPlayReceiver", e)
-                emitState(ProtocolState.ERROR)
-            }
+        scope.launch { startComponents() }
+    }
+
+    @Synchronized
+    private fun startComponents() {
+        if (!scope.isActive) return
+        try {
+            startTimingHandler()
+            startMdnsService()
+            startRtspHandler()
+        } catch (e: Exception) {
+            e.rethrowIfCancellation()
+            Logger.e("Failed to start AirPlayReceiver", e)
+            emitState(ProtocolState.ERROR)
         }
     }
 
@@ -219,6 +238,7 @@ class AirPlayReceiver(
      *
      * MUST be called when [AirReceiverService] stops or is destroyed.
      */
+    @Synchronized
     fun stop() {
         Logger.i("AirPlayReceiver stopping")
         // Each component is released on its own: one failing stop() must not leave the
@@ -240,6 +260,10 @@ class AirPlayReceiver(
      * has advertised a DACP identity yet.
      */
     fun sendRemoteCommand(command: String) = dacpClient.sendCommand(command)
+
+    internal fun disconnectSender() {
+        if (rtspHandler?.disconnectSender() != true) onStreamingStopped()
+    }
 
     internal fun canControlSender() = dacpClient.canControl()
     internal fun urlPlayback() = urlSession.info()
@@ -305,6 +329,7 @@ class AirPlayReceiver(
             audioOnlyMode = audioOnlyMode,
             audioEnabled = audioEnabled,
             admitPlayback = admitPlayback,
+            approveAudioOnly = approveAudioOnly,
             videoSurfaceProvider = videoSurfaceProvider,
             onStreamingStarted = { session -> onStreamingStarted(session) },
             onStreamingStopped = { onStreamingStopped() },
@@ -352,7 +377,13 @@ class AirPlayReceiver(
             onRemoteControlInfo = { dacpId, activeRemote -> dacpClient.configure(dacpId, activeRemote) },
             pinAuthEnabled = pinAuthEnabled,
             pairingStore = pairingStore,
-            onShowPin = { pin -> onPinChanged(pin) }
+            onShowPin = { pin -> onPinChanged(pin) },
+            pinPolicy = { sessionPinPolicy },
+            mirrorFormat = ::currentMirrorFormat,
+            onControlOpened = {
+                sessionPinPolicy = preferredPinPolicy()
+                sessionFormat = preferredMirrorFormat?.invoke()?.let { if (audioOnlyMode) it.copy(hevc = false) else it }
+            }
         ).also {
             it.start(scope)
             mediaPipeline.rtspHandler = it

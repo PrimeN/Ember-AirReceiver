@@ -23,5 +23,6 @@ package app.ember.airreceiver.service
 data class PhotoFrame(
     val bytes: ByteArray,
     val mimeType: String,
-    val receivedAtMillis: Long = System.currentTimeMillis()
+    val receivedAtMillis: Long = System.currentTimeMillis(),
+    val protocol: Protocol = Protocol.AIRPLAY
 )

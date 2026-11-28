@@ -27,17 +27,28 @@ internal class RtspDeviceInfoHandler(
     private val pinAuthEnabled: Boolean,
     private val audioOnlyMode: Boolean = false,
     private val hevcEnabled: Boolean = false,
-    private val advertisedFps: Int = 60
+    private val advertisedFps: Int = 60,
+    private val pinRequired: () -> Boolean = { pinAuthEnabled },
+    private val mirrorFormat: () -> app.ember.airreceiver.settings.MirrorFormat = {
+        app.ember.airreceiver.settings.MirrorFormat(displayWidth, displayHeight, advertisedFps, hevcEnabled)
+    }
 ) {
 
     /** GET /info — advertises receiver identity + capabilities (binary plist). */
-    internal fun handleInfo(request: RtspRequest): RtspResponse = RtspResponse(
-        statusCode = 200,
-        statusMessage = "OK",
-        bodyBytes = InfoResponder.build(context, displayWidth, displayHeight, pinRequired = pinAuthEnabled, hevcEnabled = hevcEnabled, advertisedFps = advertisedFps, audioOnlyMode = audioOnlyMode),
-        contentType = "application/x-apple-binary-plist",
-        protocol = request.responseProtocol()
-    )
+    internal fun handleInfo(request: RtspRequest): RtspResponse {
+        val format = mirrorFormat()
+        return RtspResponse(
+            statusCode = 200,
+            statusMessage = "OK",
+            bodyBytes = InfoResponder.build(
+                context, format.width, format.height,
+                pinRequired = pinRequired(), hevcEnabled = format.hevc,
+                advertisedFps = format.fps, audioOnlyMode = audioOnlyMode
+            ),
+            contentType = "application/x-apple-binary-plist",
+            protocol = request.responseProtocol()
+        )
+    }
 
     /** GET /server-info — legacy XML plist of receiver identity for AirPlay video senders. */
     internal fun handleServerInfo(request: RtspRequest): RtspResponse {

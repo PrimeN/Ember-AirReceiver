@@ -38,7 +38,9 @@ internal class RtspServer(
     private val sessionState: RtspSessionState,
     private val router: RtspRequestRouter,
     private val senderHls: SenderHlsTransport,
-    private val onStreamingStopped: () -> Unit
+    private val onStreamingStopped: () -> Unit,
+    private val onControlOpened: () -> Unit = {},
+    private val onControlClosed: () -> Unit = {}
 ) {
 
     internal var serverSocket: ServerSocket? = null
@@ -233,6 +235,7 @@ internal class RtspServer(
         currentRemoteAddress = socket.inetAddress
 
         try {
+            onControlOpened()
             var next: RtspRequest? = first
             while (running && !socket.isClosed && next != null) {
                 val request = next
@@ -279,8 +282,11 @@ internal class RtspServer(
             isMirrorSession = false
             currentRemoteAddress = null
             activeStreamTypes.clear()
+            sessionState.mirrorKeysReady = false
+            sessionState.audioModeApproved = false
             setupCount = 0
             try {
+                onControlClosed()
                 if (!senderHls.ownsPlayback(socket.inetAddress)) onStreamingStopped()
             } finally {
                 releaseControl(socket)

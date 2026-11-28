@@ -42,6 +42,7 @@ import kotlinx.coroutines.launch
 class DlnaReceiver(
     admitPlayback: () -> Boolean = { true },
     private val releasePlayback: () -> Unit = {},
+    private val replaceSender: () -> Boolean = { false },
     private val context: Context,
     private val displayName: String,
     private val surfaceProvider: () -> Surface?,
@@ -187,6 +188,8 @@ class DlnaReceiver(
     }
 
     override fun admitPlayback(): Boolean = playbackAdmission()
+
+    override fun canReplaceSender(): Boolean = replaceSender()
 
     override fun onSetTransportUri(uri: String) {
         onStop()

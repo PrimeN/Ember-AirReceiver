@@ -26,6 +26,17 @@ class AppSettingsTest {
     // ─── Default values ──────────────────────────────────────────────────────
 
     @Test
+    fun `new controls preserve existing remembered pairing and resolution`() {
+        val legacy = AppSettings(airPlayPinAuthEnabled = true, forceHighResolution = true)
+        assertEquals(AirPlayPinPolicy.REMEMBER, legacy.effectivePinPolicy)
+        assertEquals(MirrorResolution.QHD, legacy.effectiveMirrorResolution)
+        assertEquals(AirPlayPinPolicy.OFF, legacy.copy(airPlayPinPolicy = AirPlayPinPolicy.OFF).effectivePinPolicy)
+        assertEquals(MirrorResolution.AUTO, legacy.copy(mirrorResolution = MirrorResolution.AUTO).effectiveMirrorResolution)
+        assertTrue(AppSettings.DEFAULT.startOnLaunch)
+        assertFalse(AppSettings.DEFAULT.startOnBoot)
+    }
+
+    @Test
     fun `default settings have empty display name`() {
         assertEquals("", AppSettings.DEFAULT.displayName)
     }

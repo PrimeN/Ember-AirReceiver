@@ -118,13 +118,22 @@ class SettingsRepository(private val context: Context) {
         castEnabled        = this[Keys.CAST_ENABLED]            ?: true,
         dlnaEnabled        = this[Keys.DLNA_ENABLED]            ?: true,
         airPlayPinAuthEnabled = this[Keys.AIRPLAY_PIN_AUTH]     ?: false,
+        airPlayPinPolicy = this[Keys.PIN_POLICY]?.let { value -> AirPlayPinPolicy.entries.find { it.name == value } },
+        mirrorResolution = this[Keys.MIRROR_RESOLUTION]?.let { value -> MirrorResolution.entries.find { it.name == value } },
+        customMirrorWidth = (this[Keys.CUSTOM_MIRROR_WIDTH] ?: 1920).coerceIn(320, 3840) and 1.inv(),
+        customMirrorHeight = (this[Keys.CUSTOM_MIRROR_HEIGHT] ?: 1080).coerceIn(240, 2160) and 1.inv(),
+        replaceCurrentSender = this[Keys.REPLACE_CURRENT_SENDER] ?: false,
+        idleVideoPreview = this[Keys.IDLE_VIDEO_PREVIEW] ?: false,
+        autoFullscreen = this[Keys.AUTO_FULLSCREEN] ?: true,
+        autoAudioMode = this[Keys.AUTO_AUDIO_MODE] ?: true,
+        maxMirrorFps = (this[Keys.MAX_MIRROR_FPS] ?: 0).coerceIn(0, 120),
+        startOnLaunch      = this[Keys.START_ON_LAUNCH]         ?: true,
         startOnBoot        = this[Keys.START_ON_BOOT]           ?: false,
         showDebugOverlay   = this[Keys.SHOW_DEBUG_OVERLAY]      ?: false,
         forceHighResolution = this[Keys.FORCE_HIGH_RESOLUTION]  ?: false,
         lowBandwidthMirroring = this[Keys.LOW_BANDWIDTH] ?: false,
         airPlayAudioOnly = this[Keys.AIRPLAY_AUDIO_ONLY] ?: false,
         safeAreaPercent = (this[Keys.SAFE_AREA_PERCENT] ?: 0).coerceIn(0, 8),
-        protectPlayback = this[Keys.PROTECT_PLAYBACK] ?: false,
         mirrorAudioEnabled = this[Keys.MIRROR_AUDIO_ENABLED]    ?: true
     )
 
@@ -139,13 +148,22 @@ class SettingsRepository(private val context: Context) {
         this[Keys.CAST_ENABLED]         = settings.castEnabled
         this[Keys.DLNA_ENABLED]         = settings.dlnaEnabled
         this[Keys.AIRPLAY_PIN_AUTH]     = settings.airPlayPinAuthEnabled
+        settings.airPlayPinPolicy?.let { this[Keys.PIN_POLICY] = it.name } ?: remove(Keys.PIN_POLICY)
+        settings.mirrorResolution?.let { this[Keys.MIRROR_RESOLUTION] = it.name } ?: remove(Keys.MIRROR_RESOLUTION)
+        this[Keys.CUSTOM_MIRROR_WIDTH] = settings.customMirrorWidth
+        this[Keys.CUSTOM_MIRROR_HEIGHT] = settings.customMirrorHeight
+        this[Keys.REPLACE_CURRENT_SENDER] = settings.replaceCurrentSender
+        this[Keys.IDLE_VIDEO_PREVIEW] = settings.idleVideoPreview
+        this[Keys.AUTO_FULLSCREEN] = settings.autoFullscreen
+        this[Keys.AUTO_AUDIO_MODE] = settings.autoAudioMode
+        this[Keys.MAX_MIRROR_FPS] = settings.maxMirrorFps
+        this[Keys.START_ON_LAUNCH]      = settings.startOnLaunch
         this[Keys.START_ON_BOOT]        = settings.startOnBoot
         this[Keys.SHOW_DEBUG_OVERLAY]   = settings.showDebugOverlay
         this[Keys.FORCE_HIGH_RESOLUTION] = settings.forceHighResolution
         this[Keys.LOW_BANDWIDTH] = settings.lowBandwidthMirroring
         this[Keys.AIRPLAY_AUDIO_ONLY] = settings.airPlayAudioOnly
         this[Keys.SAFE_AREA_PERCENT] = settings.safeAreaPercent.coerceIn(0, 8)
-        this[Keys.PROTECT_PLAYBACK] = settings.protectPlayback
         this[Keys.MIRROR_AUDIO_ENABLED] = settings.mirrorAudioEnabled
     }
 
@@ -162,13 +180,22 @@ class SettingsRepository(private val context: Context) {
         val CAST_ENABLED        = booleanPreferencesKey("cast_enabled")
         val DLNA_ENABLED        = booleanPreferencesKey("dlna_enabled")
         val AIRPLAY_PIN_AUTH    = booleanPreferencesKey("airplay_pin_auth")
+        val PIN_POLICY = stringPreferencesKey("pin_policy")
+        val MIRROR_RESOLUTION = stringPreferencesKey("mirror_resolution")
+        val CUSTOM_MIRROR_WIDTH = intPreferencesKey("custom_mirror_width")
+        val CUSTOM_MIRROR_HEIGHT = intPreferencesKey("custom_mirror_height")
+        val REPLACE_CURRENT_SENDER = booleanPreferencesKey("replace_current_sender")
+        val IDLE_VIDEO_PREVIEW = booleanPreferencesKey("idle_video_preview")
+        val AUTO_FULLSCREEN = booleanPreferencesKey("auto_fullscreen")
+        val AUTO_AUDIO_MODE = booleanPreferencesKey("auto_audio_mode")
+        val MAX_MIRROR_FPS = intPreferencesKey("max_mirror_fps")
+        val START_ON_LAUNCH = booleanPreferencesKey("start_on_launch")
         val START_ON_BOOT       = booleanPreferencesKey("start_on_boot")
         val SHOW_DEBUG_OVERLAY  = booleanPreferencesKey("show_debug_overlay")
         val FORCE_HIGH_RESOLUTION = booleanPreferencesKey("force_high_resolution")
         val LOW_BANDWIDTH = booleanPreferencesKey("low_bandwidth")
         val AIRPLAY_AUDIO_ONLY = booleanPreferencesKey("airplay_audio_only")
         val SAFE_AREA_PERCENT = intPreferencesKey("safe_area_percent")
-        val PROTECT_PLAYBACK = booleanPreferencesKey("protect_playback")
         val MIRROR_AUDIO_ENABLED = booleanPreferencesKey("mirror_audio_enabled")
     }
 }

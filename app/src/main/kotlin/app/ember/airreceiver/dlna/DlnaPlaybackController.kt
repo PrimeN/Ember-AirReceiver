@@ -49,6 +49,8 @@ interface DlnaPlaybackController {
 
     fun admitPlayback(): Boolean = true
 
+    fun canReplaceSender(): Boolean = false
+
     fun onResume() = Unit
 
     fun onRendererGain(volume: Int, muted: Boolean) = Unit

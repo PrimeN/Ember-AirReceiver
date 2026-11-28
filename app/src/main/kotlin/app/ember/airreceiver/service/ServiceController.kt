@@ -40,6 +40,13 @@ object ServiceController {
         startForegroundServiceCompat(context, intent)
     }
 
+    internal fun setReceiverEnabled(context: Context, protocol: Protocol, enabled: Boolean) {
+        val intent = buildIntent(context, AirReceiverService.ACTION_SET_RECEIVER)
+            .putExtra(AirReceiverService.EXTRA_PROTOCOL, protocol.name)
+            .putExtra(AirReceiverService.EXTRA_ENABLED, enabled)
+        startForegroundServiceCompat(context, intent)
+    }
+
     /**
      * Stops the AirReceiverService.
      *

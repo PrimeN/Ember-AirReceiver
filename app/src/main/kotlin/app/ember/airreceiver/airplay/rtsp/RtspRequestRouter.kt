@@ -20,7 +20,6 @@ import app.ember.airreceiver.util.Logger
  *   val response = router.routeRequest(request)   // 200 OK, or 501 for an unknown method
  */
 internal class RtspRequestRouter(
-    private val admitPlayback: () -> Boolean = { true },
     private val audioOnlyMode: Boolean = false,
     private val verbs: RtspHandler,
     private val mirrorHandler: RtspMirrorHandler,
@@ -40,10 +39,6 @@ internal class RtspRequestRouter(
         if (audioOnlyMode && (request.method == "PUT" || request.method == "DELETE" ||
                 (request.method == "POST" && path == "/play"))) {
             return RtspResponse(461, "Unsupported Transport", protocol = request.responseProtocol())
-        }
-        if ((request.method in setOf("SETUP", "RECORD", "PUT") || (request.method == "POST" && path == "/play")) &&
-            !admitPlayback()) {
-            return RtspResponse(503, "Receiver Busy", protocol = request.responseProtocol())
         }
         Logger.d("RTSP ${request.method} ${request.uri}")
         // Senders attach their DACP reverse-control identity to most requests — capture it so the TV

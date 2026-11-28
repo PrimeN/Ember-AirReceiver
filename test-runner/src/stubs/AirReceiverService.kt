@@ -18,6 +18,9 @@ class AirReceiverService {
         const val ACTION_START   = "app.ember.airreceiver.action.START"
         const val ACTION_STOP    = "app.ember.airreceiver.action.STOP"
         const val ACTION_RESTART = "app.ember.airreceiver.action.RESTART"
+        const val ACTION_SET_RECEIVER = "app.ember.airreceiver.action.SET_RECEIVER"
+        const val EXTRA_PROTOCOL = "protocol"
+        const val EXTRA_ENABLED = "enabled"
         const val NOTIFICATION_ID = 1
         const val CHANNEL_ID     = "airreceiver_service"
     }

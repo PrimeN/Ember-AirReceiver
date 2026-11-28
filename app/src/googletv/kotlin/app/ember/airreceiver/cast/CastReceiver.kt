@@ -46,6 +46,7 @@ class CastReceiver(
             val receiverContext = CastReceiverContext.getInstance()
             receiverContext.start()
             started = true
+            isRunning = true
             Logger.i("Cast Connect receiver started")
             onStateChanged(ProtocolState.ADVERTISING)
         } catch (e: Exception) {
@@ -61,6 +62,8 @@ class CastReceiver(
     private fun stopOnMainThread() {
         try {
             if (started) {
+                isRunning = false
+                stopExternalPlayback?.invoke()
                 CastReceiverContext.getInstance().stop()
                 Logger.i("Cast Connect receiver stopped")
             }
@@ -73,6 +76,10 @@ class CastReceiver(
     }
 
     companion object {
+        var isRunning = false
+            private set
+        internal var stopExternalPlayback: (() -> Unit)? = null
+
         fun isAvailable(context: Context): Boolean {
             return try {
                 context.packageManager.getPackageInfo("com.google.android.gms", 0)

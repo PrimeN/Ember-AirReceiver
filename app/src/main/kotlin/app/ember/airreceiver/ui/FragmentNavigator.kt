@@ -33,7 +33,8 @@ internal class FragmentNavigator(
     /** The "Home" nav panel item. */
     private val navItemHome: TextView,
     /** The "Settings" nav panel item. */
-    private val navItemSettings: TextView
+    private val navItemSettings: TextView,
+    private val onNavigate: () -> Unit = {}
 ) {
 
     /**
@@ -90,6 +91,7 @@ internal class FragmentNavigator(
         navItemHome.isSelected = navItem == navItemHome
         navItemSettings.isSelected = navItem == navItemSettings
         selectedNavIndex = if (navItem == navItemHome) 0 else 1
+        onNavigate()
 
         // Replace fragment
         fragmentManager.beginTransaction()

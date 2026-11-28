@@ -126,6 +126,7 @@ internal object DiagnosticsLabelsFactory {
      * @return the localized text of the state.
      */
     fun protocolStateText(context: Context, state: ProtocolState): String = when (state) {
+        ProtocolState.STARTING -> context.getString(R.string.protocol_state_starting)
         ProtocolState.DISABLED -> context.getString(R.string.protocol_state_disabled)
         ProtocolState.ADVERTISING -> context.getString(R.string.protocol_state_advertising)
         ProtocolState.CONNECTED -> context.getString(R.string.protocol_state_connected)

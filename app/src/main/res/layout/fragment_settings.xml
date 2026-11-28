@@ -76,9 +76,20 @@
                 android:importantForAccessibility="no" />
         </LinearLayout>
 
-        <!-- Force higher mirroring resolution (1440p) -->
         <include layout="@layout/settings_toggle_row"
-            android:id="@+id/row_force_high_res" />
+            android:id="@+id/row_idle_preview"
+            android:layout_width="match_parent"
+            android:layout_height="72dp" />
+
+        <include layout="@layout/settings_toggle_row"
+            android:id="@+id/row_auto_fullscreen"
+            android:layout_width="match_parent"
+            android:layout_height="72dp" />
+
+        <include layout="@layout/settings_toggle_row"
+            android:id="@+id/row_auto_audio_mode"
+            android:layout_width="match_parent"
+            android:layout_height="72dp" />
 
         <Button
             android:id="@+id/row_safe_area"
@@ -127,17 +138,33 @@
             android:id="@+id/row_airplay_audio_only" />
 
         <include layout="@layout/settings_toggle_row"
-            android:id="@+id/row_protect_playback" />
+            android:id="@+id/row_sender_handoff" />
 
         <include layout="@layout/settings_toggle_row"
             android:id="@+id/row_mirror_audio"
             android:layout_width="match_parent"
             android:layout_height="72dp" />
 
-        <include layout="@layout/settings_toggle_row"
-            android:id="@+id/row_pin_auth"
+        <Button
+            android:id="@+id/row_pin_policy"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <Button
+            android:id="@+id/row_mirror_resolution"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <Button
+            android:id="@+id/row_mirror_fps"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/text_mirror_format"
             android:layout_width="match_parent"
-            android:layout_height="72dp" />
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_secondary" />
 
         <!-- ── Section: Service ───────────────────────────────── -->
         <include layout="@layout/settings_section_header"
@@ -145,6 +172,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp" />
+
+        <include layout="@layout/settings_toggle_row"
+            android:id="@+id/row_start_on_launch"
+            android:layout_width="match_parent"
+            android:layout_height="72dp" />
 
         <include layout="@layout/settings_toggle_row"
             android:id="@+id/row_start_on_boot"
