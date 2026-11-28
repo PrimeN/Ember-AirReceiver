@@ -98,6 +98,7 @@ data class AppSettings(
      * mirroring rock-solid. Turn on to experiment with audio.
      */
     val lowBandwidthMirroring: Boolean = false,
+    val airPlayAudioOnly: Boolean = false,
     val mirrorAudioEnabled: Boolean = true
 ) {
 

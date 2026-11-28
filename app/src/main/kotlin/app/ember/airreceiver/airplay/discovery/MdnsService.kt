@@ -85,6 +85,7 @@ class MdnsService(
      * which has a MAC address prefix and is not shown to users).
      */
     private val onActualNameRegistered: (String) -> Unit = {},
+    private val audioOnlyMode: Boolean = false,
     private val hevcEnabled: Boolean = false
 ) {
 
@@ -135,6 +136,7 @@ class MdnsService(
         context = context,
         nsdManager = nsdManager,
         tracker = tracker,
+        audioOnlyMode = audioOnlyMode,
         hevcEnabled = hevcEnabled,
         onStateChange = onStateChange,
         onActualNameRegistered = onActualNameRegistered,

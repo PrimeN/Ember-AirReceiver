@@ -121,7 +121,8 @@ internal class ReceiverSupervisor(
             displayName = settings.effectiveDisplayName,
             mirrorWidth = settings.mirrorWidth,
             mirrorHeight = settings.mirrorHeight,
-            audioEnabled = settings.mirrorAudioEnabled,
+            audioEnabled = settings.mirrorAudioEnabled || settings.airPlayAudioOnly,
+            audioOnlyMode = settings.airPlayAudioOnly,
             lowBandwidthMirroring = settings.lowBandwidthMirroring,
             pinAuthEnabled = settings.airPlayPinAuthEnabled,
             // Delegate to the current provider at call time — captures the field, not a fixed value.

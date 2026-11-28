@@ -79,6 +79,7 @@ open class RtspHandler(
     private val onRemoteControlInfo: (dacpId: String?, activeRemote: String?) -> Unit = { _, _ -> },
     /** When true, require HomeKit-style SRP PIN pairing before streaming (gated by AppSettings). */
     private val advertisedFps: Int = 60,
+    private val audioOnlyMode: Boolean = false,
     private val hevcEnabled: Boolean = false,
     private val pinAuthEnabled: Boolean = false,
     /** Persistent store of paired controllers' Ed25519 keys (for pair-verify). */
@@ -95,6 +96,7 @@ open class RtspHandler(
     private val verbHandler: RtspVerbHandler by lazy {
         RtspVerbHandler(
             sessionState = sessionState,
+            audioOnlyMode = audioOnlyMode,
             onStreamingStarted = onStreamingStarted,
             onStreamingStopped = onStreamingStopped,
             onPhotoReceived = onPhotoReceived,
@@ -122,6 +124,7 @@ open class RtspHandler(
         RtspMirrorHandler(
             sessionState = sessionState,
             audioEnabled = audioEnabled,
+            audioOnlyMode = audioOnlyMode,
             onMirrorSetupKeys = onMirrorSetupKeys,
             onMirrorStreamStart = onMirrorStreamStart,
             onMirrorAudioStart = onMirrorAudioStart,
@@ -166,7 +169,8 @@ open class RtspHandler(
             displayWidth = displayWidth,
             displayHeight = displayHeight,
             advertisedFps = advertisedFps,
-            hevcEnabled = hevcEnabled,
+            audioOnlyMode = audioOnlyMode,
+        hevcEnabled = hevcEnabled,
             pinAuthEnabled = pinAuthEnabled
         )
     }
@@ -175,6 +179,7 @@ open class RtspHandler(
     private val router: RtspRequestRouter by lazy {
         RtspRequestRouter(
             verbs = this,
+            audioOnlyMode = audioOnlyMode,
             mirrorHandler = mirrorHandler,
             pairingHandler = pairingHandler,
             parameterHandler = parameterHandler,

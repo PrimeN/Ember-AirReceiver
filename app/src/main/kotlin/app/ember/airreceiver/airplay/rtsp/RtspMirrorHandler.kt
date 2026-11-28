@@ -24,6 +24,7 @@ import app.ember.airreceiver.util.Logger
  */
 internal class RtspMirrorHandler(
     private val sessionState: RtspSessionState,
+    private val audioOnlyMode: Boolean = false,
     private val audioEnabled: Boolean,
     private val onMirrorSetupKeys: (
         aesKey: ByteArray, ecdhSecret: ByteArray, aesIv: ByteArray,
@@ -109,6 +110,9 @@ internal class RtspMirrorHandler(
         }
 
         val streams = req["streams"] as? List<*>
+        if (audioOnlyMode && streams?.any { ((it as? Map<*, *>)?.get("type") as? Number)?.toInt() == 110 } == true) {
+            return RtspResponse(461, "Unsupported Transport", protocol = request.responseProtocol())
+        }
         if (streams != null) {
             val resStreams = streams.mapNotNull { s ->
                 val stream = s as? Map<*, *> ?: return@mapNotNull null

@@ -26,6 +26,7 @@ import app.ember.airreceiver.util.Logger
  *   val response = verbs.handleAnnounceInternal(request)   // 200 OK once the SDP parsed
  */
 internal class RtspVerbHandler(
+    private val audioOnlyMode: Boolean = false,
     private val sessionState: RtspSessionState,
     private val onStreamingStarted: (session: SessionDescription) -> Unit,
     private val onStreamingStopped: () -> Unit,
@@ -81,6 +82,7 @@ internal class RtspVerbHandler(
             return RtspResponse(statusCode = 400, statusMessage = "Bad Request")
         }
 
+        if (audioOnlyMode && parsed.hasVideo) return RtspResponse(461, "Unsupported Transport", protocol = request.responseProtocol())
         currentSession = parsed.copy(senderName = extractSenderName(request.headers["User-Agent"]))
         val s = currentSession!!
         Logger.i("Session: hasVideo=${s.hasVideo} hasAudio=${s.hasAudio} " +

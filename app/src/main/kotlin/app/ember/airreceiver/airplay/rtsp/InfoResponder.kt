@@ -20,7 +20,7 @@ import app.ember.airreceiver.util.NetworkUtils
  */
 object InfoResponder {
 
-    fun build(context: Context, width: Int = 1920, height: Int = 1080, pinRequired: Boolean = false, hevcEnabled: Boolean = false, advertisedFps: Int = 60): ByteArray {
+    fun build(context: Context, width: Int = 1920, height: Int = 1080, pinRequired: Boolean = false, hevcEnabled: Boolean = false, advertisedFps: Int = 60, audioOnlyMode: Boolean = false): ByteArray {
         val mac = NetworkUtils.getMacAddress()
         // When PIN access control is on, set the "pairing/PIN required" status bit so the sender runs
         // the SRP pair-setup flow. NOTE: exact flag semantics are sender-version-dependent — verify
@@ -29,7 +29,7 @@ object InfoResponder {
         val info = mapOf(
             "deviceID" to mac,
             "macAddress" to mac,
-            "features" to features(hevcEnabled),
+            "features" to features(hevcEnabled, audioOnlyMode),
             "statusFlags" to statusFlags,
             "model" to MODEL,
             "name" to NetworkUtils.getDeviceName(context),
@@ -53,7 +53,7 @@ object InfoResponder {
                 mapOf("type" to 101L, "audioType" to "default", "inputLatencyMicros" to 0L, "outputLatencyMicros" to 0L)
             ),
             // Screen the sender can mirror to — without this, macOS aborts after key setup.
-            "displays" to listOf(
+            "displays" to if (audioOnlyMode) emptyList() else listOf(
                 mapOf(
                     "uuid" to "e0ff8a27-6738-3d56-8a16-cc53aacee925",
                     "widthPhysical" to 0L,
@@ -73,11 +73,15 @@ object InfoResponder {
         return PlistCodec.encode(info)
     }
 
-    internal fun features(hevcEnabled: Boolean): Long =
-        AIRPLAY_FEATURES or (if (hevcEnabled) 1L shl 42 else 0L)
+    internal fun features(hevcEnabled: Boolean, audioOnlyMode: Boolean = false): Long =
+        if (audioOnlyMode) AIRPLAY_FEATURES and VIDEO_FEATURES.inv()
+        else AIRPLAY_FEATURES or (if (hevcEnabled) 1L shl 42 else 0L)
 
-    internal fun txtFeatures(hevcEnabled: Boolean): String {
-        val bits = features(hevcEnabled)
+    private const val VIDEO_FEATURES = (1L shl 0) or (1L shl 1) or (1L shl 4) or
+        (1L shl 7) or (1L shl 8) or (1L shl 42)
+
+    internal fun txtFeatures(hevcEnabled: Boolean, audioOnlyMode: Boolean = false): String {
+        val bits = features(hevcEnabled, audioOnlyMode)
         return String.format(java.util.Locale.ROOT, "0x%X,0x%X", bits and 0xffffffffL, bits ushr 32)
     }
 

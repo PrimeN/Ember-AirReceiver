@@ -25,6 +25,7 @@ internal class RtspDeviceInfoHandler(
     private val displayWidth: Int,
     private val displayHeight: Int,
     private val pinAuthEnabled: Boolean,
+    private val audioOnlyMode: Boolean = false,
     private val hevcEnabled: Boolean = false,
     private val advertisedFps: Int = 60
 ) {
@@ -33,7 +34,7 @@ internal class RtspDeviceInfoHandler(
     internal fun handleInfo(request: RtspRequest): RtspResponse = RtspResponse(
         statusCode = 200,
         statusMessage = "OK",
-        bodyBytes = InfoResponder.build(context, displayWidth, displayHeight, pinRequired = pinAuthEnabled, hevcEnabled = hevcEnabled, advertisedFps = advertisedFps),
+        bodyBytes = InfoResponder.build(context, displayWidth, displayHeight, pinRequired = pinAuthEnabled, hevcEnabled = hevcEnabled, advertisedFps = advertisedFps, audioOnlyMode = audioOnlyMode),
         contentType = "application/x-apple-binary-plist",
         protocol = request.responseProtocol()
     )

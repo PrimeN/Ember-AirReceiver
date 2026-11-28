@@ -43,6 +43,7 @@ internal class MdnsServiceRegistrar(
     /** Called with the actual registered name (may differ due to collision resolution). */
     private val onActualNameRegistered: (String) -> Unit,
     /** Called when a registration attempt failed — the owner decides whether to retry. */
+    private val audioOnlyMode: Boolean = false,
     private val hevcEnabled: Boolean = false,
     private val handleRegistrationFailure: (slot: Int, gen: Int, label: String, errorCode: Int) -> Unit
 ) {
@@ -116,12 +117,12 @@ internal class MdnsServiceRegistrar(
 
             // Core identity TXT records
             setAttribute("deviceid", NetworkUtils.getMacAddress())
-            setAttribute("features", app.ember.airreceiver.airplay.rtsp.InfoResponder.txtFeatures(hevcEnabled))
+            setAttribute("features", app.ember.airreceiver.airplay.rtsp.InfoResponder.txtFeatures(hevcEnabled, audioOnlyMode))
             setAttribute("model", AIRPLAY_MODEL)
             setAttribute("srcvers", AIRPLAY_SERVER_VERSION)
             setAttribute("vv", "2")                             // AirPlay protocol version 2
             setAttribute("pi", NetworkUtils.getPersistentUuid(context))
-            setAttribute("flags", "0x4")                        // Screen-mirroring receiver
+            setAttribute("flags", if (audioOnlyMode) "0x0" else "0x4")                        // Screen-mirroring receiver
         }
 
         val gen = tracker.beginAttempt(SLOT_AIRPLAY)

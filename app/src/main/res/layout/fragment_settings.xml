@@ -118,6 +118,9 @@
             android:id="@+id/row_low_bandwidth" />
 
         <include layout="@layout/settings_toggle_row"
+            android:id="@+id/row_airplay_audio_only" />
+
+        <include layout="@layout/settings_toggle_row"
             android:id="@+id/row_mirror_audio"
             android:layout_width="match_parent"
             android:layout_height="72dp" />

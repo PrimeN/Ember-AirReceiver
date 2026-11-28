@@ -121,6 +121,7 @@ class SettingsRepository(private val context: Context) {
         showDebugOverlay   = this[Keys.SHOW_DEBUG_OVERLAY]      ?: false,
         forceHighResolution = this[Keys.FORCE_HIGH_RESOLUTION]  ?: false,
         lowBandwidthMirroring = this[Keys.LOW_BANDWIDTH] ?: false,
+        airPlayAudioOnly = this[Keys.AIRPLAY_AUDIO_ONLY] ?: false,
         mirrorAudioEnabled = this[Keys.MIRROR_AUDIO_ENABLED]    ?: true
     )
 
@@ -139,6 +140,7 @@ class SettingsRepository(private val context: Context) {
         this[Keys.SHOW_DEBUG_OVERLAY]   = settings.showDebugOverlay
         this[Keys.FORCE_HIGH_RESOLUTION] = settings.forceHighResolution
         this[Keys.LOW_BANDWIDTH] = settings.lowBandwidthMirroring
+        this[Keys.AIRPLAY_AUDIO_ONLY] = settings.airPlayAudioOnly
         this[Keys.MIRROR_AUDIO_ENABLED] = settings.mirrorAudioEnabled
     }
 
@@ -159,6 +161,7 @@ class SettingsRepository(private val context: Context) {
         val SHOW_DEBUG_OVERLAY  = booleanPreferencesKey("show_debug_overlay")
         val FORCE_HIGH_RESOLUTION = booleanPreferencesKey("force_high_resolution")
         val LOW_BANDWIDTH = booleanPreferencesKey("low_bandwidth")
+        val AIRPLAY_AUDIO_ONLY = booleanPreferencesKey("airplay_audio_only")
         val MIRROR_AUDIO_ENABLED = booleanPreferencesKey("mirror_audio_enabled")
     }
 }

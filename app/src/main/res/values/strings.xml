@@ -229,4 +229,6 @@
     <string name="ember_local_network_permission">Allow Ember AirReceiver to find and connect to devices on your local network.</string>
     <string name="setting_low_bandwidth">Low-bandwidth mirroring</string>
     <string name="setting_low_bandwidth_detail">Request up to 720p at 30 frames per second on the next AirPlay connection</string>
+    <string name="setting_airplay_audio_only">Audio-only AirPlay</string>
+    <string name="setting_airplay_audio_only_detail">Receive audio without accepting video mirroring, photos, or video URLs</string>
 </resources>

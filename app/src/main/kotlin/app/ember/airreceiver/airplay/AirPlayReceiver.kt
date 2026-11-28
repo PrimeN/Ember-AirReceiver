@@ -68,6 +68,7 @@ class AirPlayReceiver(
     private val mirrorHeight: Int = 1080,
     /** Whether to accept the mirroring audio stream (experimental — see AppSettings.mirrorAudioEnabled). */
     private val lowBandwidthMirroring: Boolean = false,
+    private val audioOnlyMode: Boolean = false,
     private val audioEnabled: Boolean = false,
     /** Require HomeKit-style SRP PIN pairing before streaming (AppSettings.airPlayPinAuthEnabled). */
     private val pinAuthEnabled: Boolean = false,
@@ -149,7 +150,7 @@ class AirPlayReceiver(
         else app.ember.airreceiver.airplay.mirror.MirrorCapabilities.frameRate(context, mirrorWidth, mirrorHeight)
     }
     private val hevcEnabled by lazy {
-        app.ember.airreceiver.airplay.mirror.MirrorCapabilities.supportsHevc(mirrorWidth, mirrorHeight, advertisedFps)
+        !audioOnlyMode && app.ember.airreceiver.airplay.mirror.MirrorCapabilities.supportsHevc(mirrorWidth, mirrorHeight, advertisedFps)
     }
 
     // AirPlay 2 mirroring: keys, event channel, NTP, mirror data/audio servers.
@@ -282,6 +283,7 @@ class AirPlayReceiver(
         mdnsService = MdnsService(
             context = context,
             hevcEnabled = hevcEnabled,
+            audioOnlyMode = audioOnlyMode,
             onStateChange = { state -> emitState(state) },
             onActualNameRegistered = { actualName -> onActualNameRegistered(actualName) }
         ).also { it.start(displayName.ifBlank { null }) }
@@ -295,6 +297,7 @@ class AirPlayReceiver(
             displayHeight = mirrorHeight,
             advertisedFps = advertisedFps,
             hevcEnabled = hevcEnabled,
+            audioOnlyMode = audioOnlyMode,
             audioEnabled = audioEnabled,
             videoSurfaceProvider = videoSurfaceProvider,
             onStreamingStarted = { session -> onStreamingStarted(session) },
