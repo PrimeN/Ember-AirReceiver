@@ -42,6 +42,12 @@ internal class AirPlayUrlSession(
 
     // The MediaPlayer-based URL player — created on the first /play request.
     @Volatile private var terminal: PlaybackInfo? = null
+    @Volatile private var gain = 1f
+    internal fun setVolume(volume: Float) {
+        gain = app.ember.airreceiver.airplay.audio.airPlayGain(volume)
+        urlVideoPlayer?.setGain(gain)
+    }
+
     @Volatile private var urlVideoPlayer: AirPlayVideoPlayer? = null
 
     /**
@@ -63,6 +69,7 @@ internal class AirPlayUrlSession(
                 else onStateChanged(ProtocolState.ADVERTISING)
             }
         ).also { urlVideoPlayer = it }
+        player.setGain(gain)
         player.play(url, position)
     }
 

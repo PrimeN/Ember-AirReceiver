@@ -59,6 +59,12 @@ class AudioPlayer {
     private var decodeAttempts = 0
     private var decodeSuccesses = 0
     private var decodeHealthDecided = false
+    @Volatile private var gain = 1f
+    internal fun setVolume(volume: Float) {
+        gain = airPlayGain(volume)
+        runCatching { audioTrack?.setVolume(gain) }
+    }
+
     @Volatile private var muted = false
 
     /**
@@ -286,6 +292,7 @@ class AudioPlayer {
             .build()
 
         audioTrack!!.play()
+        audioTrack?.setVolume(gain)
         Logger.d("AudioTrack initialized: ${sampleRate}Hz, $channels ch, buffer=$bufferSize bytes")
     }
 

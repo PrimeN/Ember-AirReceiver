@@ -329,7 +329,7 @@ internal class AudioPlaybackEngine(
 
     /** Sets playback volume from the sender's AirPlay volume (−30 dB … 0 dB, or ≤ −144 = mute). */
     fun setVolume(airplayVolume: Float) {
-        volumeGain = if (airplayVolume <= -144f) 0f else ((airplayVolume + 30f) / 30f).coerceIn(0f, 1f)
+        volumeGain = airPlayGain(airplayVolume)
         runCatching { audioTrack?.setVolume(volumeGain) }
     }
 

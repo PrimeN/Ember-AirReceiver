@@ -324,7 +324,7 @@ class AirPlayReceiver(
                 sessionProgress.mark(SessionProgress.Milestone.BUFFERED_STREAM_SETUP); mirrorSession.startBufferedAudio()
             },
             onBufferedAudioStop = { mirrorSession.stopBufferedAudio() },
-            onVolume = { v -> mirrorSession.setVolume(v) },
+            onVolume = ::setSessionVolume,
             onNowPlayingMetadata = { title, artist, album ->
                 nowPlaying.npTitle = title; nowPlaying.npArtist = artist; nowPlaying.npAlbum = album
                 nowPlaying.emitNowPlaying()
@@ -431,6 +431,12 @@ class AirPlayReceiver(
      * audio socket is closed, then the mirror/URL players are stopped and only afterwards the
      * decoders are released — a decoder must not be freed while a player may still render.
      */
+    private fun setSessionVolume(volume: Float) {
+        mirrorSession.setVolume(volume)
+        mediaPipeline.setVolume(volume)
+        urlSession.setVolume(volume)
+    }
+
     private fun releaseMediaComponents() {
         mediaPipeline.stopVideoFeed()
         mediaPipeline.closeAudioSocket()
@@ -438,6 +444,7 @@ class AirPlayReceiver(
         urlSession.release()
         mirrorSession.releaseSession()
         mediaPipeline.releaseDecoders()
+        setSessionVolume(0f)
         nowPlaying.reset()
     }
 

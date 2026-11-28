@@ -183,7 +183,7 @@ internal class AirPlayMirrorSession(
         val ecdhSecret = mirrorEcdhSecret ?: return 0 to 0
         val aesIv = mirrorAesIv ?: return 0 to 0
         val server = AudioStreamServer(aesKey, ecdhSecret, aesIv, sampleRate, channels, codecType, framesPerPacket, ntpClient, mirrorPeer)
-            .also { audioServer = it; it.start(scope) }
+            .also { audioServer = it; it.setVolume(volume); it.start(scope) }
         nowPlaying.audioPlaying = true
         nowPlaying.emitNowPlaying()
         if (mirrorServer == null) {
@@ -244,7 +244,10 @@ internal class AirPlayMirrorSession(
     }
 
     /** Applies the volume the sender set (AirPlay dB) to the mirror audio server. */
+    @Volatile private var volume = 0f
+
     internal fun setVolume(volume: Float) {
+        this.volume = volume
         audioServer?.setVolume(volume)
     }
 

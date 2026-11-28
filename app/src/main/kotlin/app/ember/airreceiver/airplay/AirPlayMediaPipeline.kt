@@ -55,6 +55,12 @@ internal class AirPlayMediaPipeline(
     private var videoDecoder: VideoDecoder? = null
 
     // Audio player — created when RECORD arrives, released when the session ends.
+    @Volatile private var volume = 0f
+    internal fun setVolume(value: Float) {
+        volume = value
+        audioPlayer?.setVolume(value)
+    }
+
     @Volatile private var audioPlayer: AudioPlayer? = null
 
     // UDP socket for receiving audio RTP packets — opened after RECORD, closed on TEARDOWN
@@ -102,6 +108,7 @@ internal class AirPlayMediaPipeline(
      */
     internal fun startAudioPlayer(session: SessionDescription) {
         audioPlayer = AudioPlayer().also { player ->
+            player.setVolume(volume)
             player.initialize(
                 aesKey     = session.aesKey.takeIf { session.isAudioEncrypted },
                 aesIv      = session.aesIv.takeIf  { session.isAudioEncrypted },
