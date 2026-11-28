@@ -43,6 +43,12 @@ APK artifacts omit Cast Connect configuration.
 | --- | --- |
 | ![Ember Home showing independent AirPlay, Miracast, Cast and DLNA tiles](docs/screenshots/home.png) | ![Ember Settings showing display preferences and protocol switches](docs/screenshots/settings.png) |
 
+<details>
+  <summary>Diagnostics</summary>
+
+  ![Ember Diagnostics showing receiver states, ports and the self-test section](docs/screenshots/diagnostics.png)
+</details>
+
 Captured from the Fire TV variant running in an Android TV emulator. Receiver
 availability depends on device support and permissions.
 
