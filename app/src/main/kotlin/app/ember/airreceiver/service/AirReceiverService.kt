@@ -230,6 +230,11 @@ class AirReceiverService : Service() {
         receivers.sendAirPlayRemoteCommand(command)
     }
 
+    internal suspend fun playFromLibrary(url: String): Boolean =
+        withContext(Dispatchers.IO) {
+            LocalNetworkAccess.hasAccess(this@AirReceiverService) && receivers.playFromLibrary(url)
+        }
+
     internal fun selectUrlTrack(session: Long, kind: app.ember.airreceiver.airplay.playback.PlaybackTrackKind, index: Int?) {
         serviceScope.launch { receivers.selectUrlTrack(session, kind, index) }
     }

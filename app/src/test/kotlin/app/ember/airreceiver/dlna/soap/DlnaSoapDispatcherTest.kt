@@ -4,6 +4,7 @@ package app.ember.airreceiver.dlna.soap
 
 import app.ember.airreceiver.dlna.DlnaMediaMetadata
 import app.ember.airreceiver.dlna.DlnaPlaybackController
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -26,6 +27,31 @@ import org.junit.Test
  * - hostile SOAP bodies (XXE, billion laughs, broken XML) are refused.
  */
 class DlnaSoapDispatcherTest {
+
+    @Test
+    fun `a local library selection uses shared admission and protects its transport`() {
+        var admit = false
+        var loaded: String? = null
+        val controller = object : app.ember.airreceiver.dlna.DlnaPlaybackController
+            by app.ember.airreceiver.dlna.DlnaPlaybackController.NOOP {
+            override fun admitPlayback() = admit
+            override fun onPlayLoad(
+                uri: String, metadata: app.ember.airreceiver.dlna.DlnaMediaMetadata?, loadId: Long, positionMillis: Long
+            ) { loaded = uri }
+        }
+        val dispatcher = DlnaSoapDispatcher(controller)
+        val media = "http://192.168.1.10/video.mp4"
+        assertFalse(dispatcher.playFromLibrary(media))
+        assertNull(loaded)
+        admit = true
+        assertTrue(dispatcher.playFromLibrary(media))
+        assertEquals(media, loaded)
+        val peer = java.net.InetAddress.getByAddress(byteArrayOf(10, 0, 0, 1))
+        val result = dispatcher.dispatch(
+            "/upnp/control/AVTransport", null, envelope("AVTransport", "Stop"), peer
+        )
+        assertEquals(500, result.statusCode)
+    }
 
     @Test
     fun `replacement sender must stage media and request playback before taking over`() {

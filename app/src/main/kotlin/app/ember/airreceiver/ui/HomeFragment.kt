@@ -77,6 +77,7 @@ class HomeFragment : Fragment() {
     private lateinit var btnStop: Button
     private lateinit var btnRestart: Button
     private var receiverName = ""
+    private var libraryDialog: DlnaLibraryDialog? = null
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View =
         inflater.inflate(R.layout.fragment_home, container, false)
@@ -98,6 +99,8 @@ class HomeFragment : Fragment() {
 
     override fun onStop() {
         super.onStop()
+        libraryDialog?.dismiss()
+        libraryDialog = null
         stateObserver?.cancel()
         service = null
         if (isBound) {
@@ -152,6 +155,17 @@ class HomeFragment : Fragment() {
      */
     private fun configureButtons() {
         requireView().findViewById<Button>(R.id.btn_connection_help).setOnClickListener { showConnectionHelp() }
+        requireView().findViewById<Button>(R.id.btn_browse_library).setOnClickListener {
+            val host = activity as? AirReceiverActivity ?: return@setOnClickListener
+            val browse = {
+                if (isAdded && view != null) {
+                    libraryDialog = DlnaLibraryDialog(requireContext(), viewLifecycleOwner.lifecycleScope) { url ->
+                        service?.playFromLibrary(url) == true
+                    }.also { it.show() }
+                }
+            }
+            if (!host.requestLocalNetworkPermissionIfNeeded(browse)) browse()
+        }
         btnStart.setOnClickListener {
             Logger.d("User tapped Start")
             val context = requireContext()

@@ -187,6 +187,8 @@ class DlnaReceiver(
         onStateChanged(ProtocolState.DISABLED)
     }
 
+    internal fun playFromLibrary(url: String): Boolean = descriptionServer?.playFromLibrary(url) == true
+
     override fun admitPlayback(): Boolean = playbackAdmission()
 
     override fun canReplaceSender(): Boolean = replaceSender()

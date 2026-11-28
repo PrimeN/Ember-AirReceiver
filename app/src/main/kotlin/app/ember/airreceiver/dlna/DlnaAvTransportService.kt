@@ -27,11 +27,12 @@ internal class DlnaAvTransportService(
     private data class StagedMedia(val uri: String, val metadata: String, val expires: Long)
 
     private var activeSender: java.net.InetAddress? = null
+    private var localPlayback = false
     private val staged = linkedMapOf<java.net.InetAddress, StagedMedia>()
 
     /** Handles a single AVTransport action. */
     fun handle(action: String, values: Map<String, String>, sender: java.net.InetAddress? = null): SoapResult = synchronized(state) {
-        val otherSender = sender != null && activeSender != null && activeSender != sender &&
+        val otherSender = sender != null && (localPlayback || (activeSender != null && activeSender != sender)) &&
             state.transportState != DlnaTransportState.TRANSPORT_STOPPED
         if (otherSender && action in setOf("Pause", "Stop", "Seek", "SetNextAVTransportURI")) {
             return@synchronized receiverBusy()
@@ -84,6 +85,7 @@ internal class DlnaAvTransportService(
         }
         sender?.let(staged::remove)
         activeSender = sender
+        localPlayback = false
         clearNext()
         storeCurrent(uri, metadata)
         publishTransportState()
@@ -122,6 +124,18 @@ internal class DlnaAvTransportService(
 
     private fun receiverBusy() = SoapResponses.fault(SoapResponses.ERROR_TRANSITION_NOT_AVAILABLE, "Receiver busy")
 
+    /** A local TV selection can replace a DLNA item and uses the shared playback admission policy. */
+    fun playFromLibrary(value: String): Boolean = synchronized(state) {
+        val validated = DlnaMediaUri.validate(value) as? DlnaMediaUri.Result.Accepted ?: return@synchronized false
+        if (!controller.admitPlayback()) return@synchronized false
+        staged.clear()
+        clearNext()
+        activeSender = null
+        localPlayback = true
+        storeCurrent(validated.uri, "", notifyController = false)
+        play(alreadyAdmitted = true).statusCode == 200
+    }
+
     private fun replacePlayback(sender: java.net.InetAddress): SoapResult {
         val media = staged.remove(sender)?.takeIf { System.nanoTime() - it.expires < 0 } ?: return receiverBusy()
         if (!controller.canReplaceSender() || !controller.admitPlayback()) return receiverBusy()
@@ -142,7 +156,10 @@ internal class DlnaAvTransportService(
             return SoapResponses.ok(action = "Play", service = SERVICE, values = emptyMap())
         }
         if (!alreadyAdmitted && !controller.admitPlayback()) return receiverBusy()
-        if (sender != null) activeSender = sender
+        if (sender != null) {
+            activeSender = sender
+            localPlayback = false
+        }
         state.transportState = DlnaTransportState.TRANSPORT_PLAYING
         state.loadFailed = false
         val position = state.trackedPositionMillis()

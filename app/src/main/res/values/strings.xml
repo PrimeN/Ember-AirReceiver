@@ -285,4 +285,16 @@
     <string name="protocol_state_starting">Starting</string>
     <string name="protocol_tile_turn_on">%1$s, %2$s. Select to turn on.</string>
     <string name="protocol_tile_turn_off">%1$s, %2$s. Select to turn off.</string>
+    <string name="dlna_library">Browse media libraries</string>
+    <string name="dlna_library_searching">Looking for media libraries on this network…</string>
+    <string name="dlna_library_loading">Loading library…</string>
+    <string name="dlna_library_empty">No media libraries were found.</string>
+    <string name="dlna_library_folder_empty">This folder is empty.</string>
+    <string name="dlna_library_error">Ember could not read this folder.</string>
+    <string name="dlna_library_dismiss">Close</string>
+    <string name="dlna_library_back">Back</string>
+    <string name="dlna_library_next">Next page</string>
+    <string name="dlna_library_previous">Previous page</string>
+    <string name="dlna_library_retry">Try again</string>
+    <string name="dlna_library_unavailable">Playback could not start. Turn on the DLNA receiver and check whether Ember is already playing another stream.</string>
 </resources>

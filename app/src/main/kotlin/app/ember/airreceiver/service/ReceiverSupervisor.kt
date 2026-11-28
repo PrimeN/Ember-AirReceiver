@@ -364,6 +364,8 @@ internal class ReceiverSupervisor(
 
     // ─── Commands forwarded to a running receiver ────────────────────────────
 
+    internal fun playFromLibrary(url: String): Boolean = dlnaReceiver?.playFromLibrary(url) == true
+
     /**
      * Sends a DACP transport command (TV remote → AirPlay sender), e.g. play/pause or skip
      * what the Mac/iPhone is streaming. No-op if no AirPlay sender has advertised a DACP

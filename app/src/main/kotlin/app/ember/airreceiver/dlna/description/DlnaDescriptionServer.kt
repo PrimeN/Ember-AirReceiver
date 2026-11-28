@@ -67,6 +67,8 @@ class DlnaDescriptionServer internal constructor(
         Thread(runnable, "dlna-http").apply { isDaemon = true }
     }
 
+    internal fun playFromLibrary(url: String): Boolean = soapDispatcher.playFromLibrary(url)
+
     internal fun onPlaybackTerminal(loadId: Long, failed: Boolean): Boolean =
         soapDispatcher.onPlaybackTerminal(loadId, failed)
 

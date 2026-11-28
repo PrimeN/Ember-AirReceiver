@@ -45,6 +45,8 @@ class DlnaSoapDispatcher internal constructor(
 
     internal fun onPlaybackTerminal(loadId: Long, failed: Boolean): Boolean =
         avTransport.onPlaybackTerminal(loadId, failed)
+    internal fun playFromLibrary(url: String): Boolean = avTransport.playFromLibrary(url)
+
     private val avTransport = DlnaAvTransportService(state, playbackController, onLastChange)
 
     /**
