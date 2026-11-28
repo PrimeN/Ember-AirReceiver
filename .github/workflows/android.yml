@@ -1,9 +1,14 @@
-name: Android receiver
+name: Build APKs
 on:
   push:
     branches: [beta, main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      signed_release:
+        description: Build signed release APKs for Google TV and Fire TV
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,10 +31,81 @@ jobs:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;28.2.13676358 cmake;3.22.1'
       - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
       - name: Test and build both TV variants
-        run: ./gradlew --no-daemon --max-workers=2 :test-runner:test :app:assembleGoogletvDebug :app:assembleFiretvDebug
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        run: |
+          ./gradlew --no-daemon --max-workers=2 :test-runner:test \
+            :app:assembleGoogletvDebug :app:assembleFiretvDebug
+      - name: Upload Google TV debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Ember-AirReceiver-debug
-          path: app/build/outputs/apk/*/debug/*.apk
+          name: Ember-AirReceiver-GoogleTV-debug-${{ github.run_number }}
+          path: app/build/outputs/apk/googletv/debug/*.apk
           if-no-files-found: error
           retention-days: 7
+      - name: Upload Fire TV debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Ember-AirReceiver-FireTV-debug-${{ github.run_number }}
+          path: app/build/outputs/apk/firetv/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
+      - name: Validate optimized builds
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.signed_release }}
+        run: |
+          ./gradlew --no-daemon --max-workers=2 \
+            :app:assembleGoogletvRelease :app:assembleFiretvRelease
+      - name: Build and verify signed APKs
+        id: signed
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.signed_release && (github.ref == 'refs/heads/beta' || github.ref == 'refs/heads/main') }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.EMBER_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.EMBER_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.EMBER_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.EMBER_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing EMBER_${name} Actions secret"
+              exit 1
+            fi
+          done
+
+          umask 077
+          KEYSTORE_PATH="$(mktemp "$RUNNER_TEMP/ember.XXXXXX.p12")"
+          export KEYSTORE_PATH
+          trap 'rm -f -- "$KEYSTORE_PATH"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          unset KEYSTORE_BASE64
+          ./gradlew --no-daemon --max-workers=2 \
+            :app:assembleGoogletvRelease :app:assembleFiretvRelease
+
+          tools="${ANDROID_HOME}/build-tools/35.0.0"
+          digest=""
+          for flavor in googletv firetv; do
+            apk="app/build/outputs/apk/$flavor/release/app-$flavor-release.apk"
+            package="app.ember.airreceiver"
+            if [[ "$flavor" == firetv ]]; then package="$package.firetv"; fi
+            actual_package=$("$tools/aapt" dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+            [[ "$actual_package" == "$package" ]]
+            certificate=$("$tools/apksigner" verify --print-certs "$apk" | awk '/certificate SHA-256 digest:/ {print $NF}')
+            [[ "$certificate" =~ ^[0-9a-fA-F]{64}$ ]]
+            [[ -z "$digest" || "$certificate" == "$digest" ]]
+            digest="$certificate"
+          done
+      - name: Upload signed Google TV APK
+        if: ${{ steps.signed.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Ember-AirReceiver-GoogleTV-release-${{ github.run_number }}
+          path: app/build/outputs/apk/googletv/release/app-googletv-release.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload signed Fire TV APK
+        if: ${{ steps.signed.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Ember-AirReceiver-FireTV-release-${{ github.run_number }}
+          path: app/build/outputs/apk/firetv/release/app-firetv-release.apk
+          if-no-files-found: error
+          retention-days: 14
