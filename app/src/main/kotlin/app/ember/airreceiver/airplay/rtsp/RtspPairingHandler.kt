@@ -23,7 +23,7 @@ import app.ember.airreceiver.settings.AirPlayPinPolicy
  *   val response = pairing.handlePairPinStart(request)   // 200 OK, PIN shown on the TV
  */
 internal class RtspPairingHandler(
-    private val verbs: RtspHandler,
+    private val verbs: RtspVerbHandler,
     private val context: android.content.Context,
     private val sessionState: RtspSessionState,
     private val pinAuthEnabled: Boolean,

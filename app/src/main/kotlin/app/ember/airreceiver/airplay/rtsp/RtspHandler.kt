@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
  *   handler.onVideoNalUnit = { nal, pts -> decode(nal, pts) }
  *   handler.stop()                                    // closes the control socket
  */
-open class RtspHandler(
+open class RtspHandler internal constructor(
     private val context: android.content.Context,
     private val displayWidth: Int = 1920,
     private val displayHeight: Int = 1080,
@@ -94,73 +94,185 @@ open class RtspHandler(
         if (pinAuthEnabled) AirPlayPinPolicy.REMEMBER else AirPlayPinPolicy.OFF
     },
     private val mirrorFormat: () -> MirrorFormat = { MirrorFormat(displayWidth, displayHeight, advertisedFps, hevcEnabled) },
-    private val onControlOpened: () -> Unit = {},
-    private val approveAudioOnly: (String) -> Boolean = { true }
+    private val approveAudioOnly: (String) -> Boolean = { true },
+    private val allowHandoff: () -> Boolean = { false },
+    private val createMirrorSession: ((MirrorFormat) -> app.ember.airreceiver.airplay.mirror.AirPlayMirrorSession)? = null,
+    private val onActiveMirrorChanged: (app.ember.airreceiver.airplay.mirror.AirPlayMirrorSession?) -> Unit = {},
+    private val onPlaybackReplaced: () -> Unit = onStreamingStopped
 ) {
 
-    /** The mutable state of the current control connection (session, FairPlay, pairing, mirror). */
-    private val sessionState = RtspSessionState()
-
-    /** The classic RTSP verbs: OPTIONS, ANNOUNCE, SETUP, RECORD, TEARDOWN, PAUSE and photo. */
-    private val verbHandler: RtspVerbHandler by lazy {
-        RtspVerbHandler(
-            sessionState = sessionState,
-            audioOnlyMode = audioOnlyMode,
-            onStreamingStarted = onStreamingStarted,
-            onStreamingStopped = onStreamingStopped,
-            onPhotoReceived = onPhotoReceived,
-            onPhotoCleared = onPhotoCleared,
-            onMirrorAudioStop = onMirrorAudioStop,
-            onMirrorVideoStop = onMirrorVideoStop,
-            onBufferedAudioStop = onBufferedAudioStop,
-            onFullTeardown = {
-                sessionState.mirrorKeysReady = false
-                sessionState.audioModeApproved = false
-                if (pinPolicy() == AirPlayPinPolicy.EACH_SESSION) pairingHandler.endSession()
-            },
-            admitPlayback = admitPlayback,
-            approveAudioOnly = approveAudioOnly
-        )
-    }
-
-    /** The AirPlay 2 pairing endpoints: pair-setup, pair-verify and the legacy PIN flow. */
-    private val pairingHandler: RtspPairingHandler by lazy {
-        RtspPairingHandler(
-            verbs = this,
-            context = context,
-            sessionState = sessionState,
-            pinAuthEnabled = pinAuthEnabled,
-            pairingStore = pairingStore,
-            onShowPin = onShowPin,
-            pinPolicy = pinPolicy
-        )
-    }
-
-    /** The AirPlay 2 mirroring endpoints: the binary-plist SETUP and the FairPlay fp-setup. */
-    private val mirrorHandler: RtspMirrorHandler by lazy {
-        RtspMirrorHandler(
-            sessionState = sessionState,
-            audioEnabled = audioEnabled,
-            audioOnlyMode = audioOnlyMode,
-            onMirrorSetupKeys = onMirrorSetupKeys,
-            onMirrorStreamStart = onMirrorStreamStart,
-            onMirrorAudioStart = onMirrorAudioStart,
-            onBufferedAudioStart = onBufferedAudioStart,
-            admitPlayback = admitPlayback,
-            approveAudioOnly = approveAudioOnly
-        )
-    }
-
-    /** The media parameters: volume, DMAP now-playing metadata and album artwork. */
-    private val parameterHandler: RtspParameterHandler by lazy {
-        RtspParameterHandler(
-            onVolume = onVolume,
-            onNowPlayingMetadata = onNowPlayingMetadata,
-            onArtwork = onArtwork
-        )
-    }
-
     private val senderHls = SenderHlsTransport(onVideoPlay, onVideoStop)
+    private var visiblePinSource: Control? = null
+
+    private inner class Control(
+        val sessionState: RtspSessionState,
+        private val socket: java.net.Socket?,
+        private val format: MirrorFormat,
+        private val policy: AirPlayPinPolicy
+    ) {
+        private val mirror = if (socket == null) null else createMirrorSession?.invoke(format)
+        private var remoteIdentity: Pair<String?, String?>? = null
+        private var pendingVolume: Float? = null
+
+        private fun owns() = socket == null || server.ownsPlayback(socket)
+
+        private fun finish() {
+            if (socket == null) onStreamingStopped() else server.finishPlayback(socket)
+        }
+
+        private fun activate(): Boolean {
+            if (socket == null) return admitPlayback()
+            val alreadyPlaying = owns()
+            if (!server.claimPlayback(socket)) return false
+            if (!alreadyPlaying) {
+                onActiveMirrorChanged(mirror)
+                remoteIdentity?.let { (id, token) -> onRemoteControlInfo(id, token) }
+                pendingVolume?.let(onVolume)
+            }
+            return true
+        }
+
+        fun close() {
+            pairingHandler.endSession()
+            mirror?.releaseStreams()
+            mirror?.releaseSession()
+        }
+
+        /** The classic RTSP verbs: OPTIONS, ANNOUNCE, SETUP, RECORD, TEARDOWN, PAUSE and photo. */
+        val verbHandler: RtspVerbHandler by lazy {
+            RtspVerbHandler(
+                sessionState = sessionState,
+                audioOnlyMode = audioOnlyMode,
+                onStreamingStarted = onStreamingStarted,
+                onStreamingStopped = { if (owns()) finish() },
+                onPhotoReceived = onPhotoReceived,
+                onPhotoCleared = { if (owns()) onPhotoCleared() },
+                onMirrorAudioStop = { if (owns()) mirror?.stopMirrorAudio() ?: onMirrorAudioStop() },
+                onMirrorVideoStop = { if (owns()) mirror?.stopMirrorVideo() ?: onMirrorVideoStop() },
+                onBufferedAudioStop = { if (owns()) mirror?.stopBufferedAudio() ?: onBufferedAudioStop() },
+                onFullTeardown = {
+                    sessionState.mirrorKeysReady = false
+                    sessionState.audioModeApproved = false
+                    if (policy == AirPlayPinPolicy.EACH_SESSION) pairingHandler.endSession()
+                },
+                admitPlayback = ::activate,
+                approveAudioOnly = approveAudioOnly
+            )
+        }
+
+        /** The AirPlay 2 pairing endpoints: pair-setup, pair-verify and the legacy PIN flow. */
+        val pairingHandler: RtspPairingHandler by lazy {
+            RtspPairingHandler(
+                verbs = verbHandler,
+                context = context,
+                sessionState = sessionState,
+                pinAuthEnabled = pinAuthEnabled,
+                pairingStore = pairingStore,
+                onShowPin = { pin ->
+                    if (pin != null) {
+                        visiblePinSource = this
+                        onShowPin(pin)
+                    } else if (visiblePinSource === this) {
+                        visiblePinSource = null
+                        onShowPin(null)
+                    }
+                },
+                pinPolicy = { policy }
+            )
+        }
+
+        /** The AirPlay 2 mirroring endpoints: the binary-plist SETUP and the FairPlay fp-setup. */
+        private val mirrorHandler: RtspMirrorHandler by lazy {
+            RtspMirrorHandler(
+                sessionState = sessionState,
+                audioEnabled = audioEnabled,
+                audioOnlyMode = audioOnlyMode,
+                onMirrorSetupKeys = { key, secret, iv, peer, port ->
+                    mirror?.startMirrorKeys(key, secret, iv, peer, port) ?: onMirrorSetupKeys(key, secret, iv, peer, port)
+                },
+                onMirrorStreamStart = { mirror?.startMirrorStream(it) ?: onMirrorStreamStart(it) },
+                onMirrorAudioStart = { sr, ch, ct, spf -> mirror?.startMirrorAudio(sr, ch, ct, spf) ?: onMirrorAudioStart(sr, ch, ct, spf) },
+                onBufferedAudioStart = { mirror?.startBufferedAudio() ?: onBufferedAudioStart() },
+                admitPlayback = ::activate,
+                approveAudioOnly = approveAudioOnly
+            )
+        }
+
+        /** The media parameters: volume, DMAP now-playing metadata and album artwork. */
+        private val parameterHandler: RtspParameterHandler by lazy {
+            RtspParameterHandler(
+                onVolume = { volume ->
+                    pendingVolume = volume
+                    if (owns()) onVolume(volume)
+                },
+                onNowPlayingMetadata = { title, artist, album -> if (owns()) onNowPlayingMetadata(title, artist, album) },
+                onArtwork = { if (owns()) onArtwork(it) }
+            )
+        }
+
+        /** The AirPlay URL-video mode: /play, /rate, /scrub, /stop and /playback-info. */
+        private val videoUrlHandler: RtspVideoUrlHandler by lazy {
+            RtspVideoUrlHandler(
+                onVideoPlay = onVideoPlay,
+                onVideoRate = { if (owns()) onVideoRate(it) },
+                onVideoScrub = { if (owns()) onVideoScrub(it) },
+                onVideoStop = {
+                    if (owns()) {
+                        senderHls.stopPlayback()
+                        onVideoStop()
+                    }
+                },
+                onPlaybackInfo = { if (owns()) onPlaybackInfo() else null },
+                admitPlayback = ::activate,
+                onSenderPlaylist = { request, url, offset ->
+                    senderHls.play(request, sessionState.currentRemoteAddress, url, offset)
+                }
+            )
+        }
+
+        /** The receiver identity and session acknowledgement endpoints. */
+        private val deviceInfoHandler: RtspDeviceInfoHandler by lazy {
+            RtspDeviceInfoHandler(
+                context = context,
+                displayWidth = displayWidth,
+                displayHeight = displayHeight,
+                advertisedFps = advertisedFps,
+                audioOnlyMode = audioOnlyMode,
+                hevcEnabled = hevcEnabled,
+                pinAuthEnabled = pinAuthEnabled,
+                pinRequired = { policy != AirPlayPinPolicy.OFF },
+                mirrorFormat = { format }
+            )
+        }
+
+        /** Maps an incoming request to the handler that answers it. */
+        val router: RtspRequestRouter by lazy {
+            RtspRequestRouter(
+                verbs = verbHandler,
+                audioOnlyMode = audioOnlyMode,
+                mirrorHandler = mirrorHandler,
+                pairingHandler = pairingHandler,
+                parameterHandler = parameterHandler,
+                videoUrlHandler = videoUrlHandler,
+                deviceInfoHandler = deviceInfoHandler,
+                onRemoteControlInfo = { id, token ->
+                    remoteIdentity = id to token
+                    if (owns()) onRemoteControlInfo(id, token)
+                },
+                onAudioFlush = { sequence ->
+                    if (owns()) {
+                        mirror?.flushAudio(sequence)
+                        onAudioFlush(sequence)
+                    }
+                }
+            )
+        }
+
+    }
+
+    private val standalone by lazy {
+        Control(RtspSessionState(), null, mirrorFormat(), pinPolicy())
+    }
 
     internal fun disconnectSender(): Boolean {
         senderHls.stopPlayback()
@@ -171,64 +283,24 @@ open class RtspHandler(
 
     internal fun cancelPlaylistPlayback() = senderHls.stopPlayback()
 
-    /** The AirPlay URL-video mode: /play, /rate, /scrub, /stop and /playback-info. */
-    private val videoUrlHandler: RtspVideoUrlHandler by lazy {
-        RtspVideoUrlHandler(
-            onVideoPlay = onVideoPlay,
-            onVideoRate = onVideoRate,
-            onVideoScrub = onVideoScrub,
-            onVideoStop = {
-                senderHls.stopPlayback()
-                onVideoStop()
-            },
-            onPlaybackInfo = onPlaybackInfo,
-            admitPlayback = admitPlayback,
-            onSenderPlaylist = { request, url, offset ->
-                senderHls.play(request, sessionState.currentRemoteAddress, url, offset)
-            }
-        )
-    }
-
-    /** The receiver identity and session acknowledgement endpoints. */
-    private val deviceInfoHandler: RtspDeviceInfoHandler by lazy {
-        RtspDeviceInfoHandler(
-            context = context,
-            displayWidth = displayWidth,
-            displayHeight = displayHeight,
-            advertisedFps = advertisedFps,
-            audioOnlyMode = audioOnlyMode,
-        hevcEnabled = hevcEnabled,
-            pinAuthEnabled = pinAuthEnabled,
-            pinRequired = { pinPolicy() != AirPlayPinPolicy.OFF },
-            mirrorFormat = mirrorFormat
-        )
-    }
-
-    /** Maps an incoming request to the handler that answers it. */
-    private val router: RtspRequestRouter by lazy {
-        RtspRequestRouter(
-            verbs = this,
-            audioOnlyMode = audioOnlyMode,
-            mirrorHandler = mirrorHandler,
-            pairingHandler = pairingHandler,
-            parameterHandler = parameterHandler,
-            videoUrlHandler = videoUrlHandler,
-            deviceInfoHandler = deviceInfoHandler,
-            onRemoteControlInfo = onRemoteControlInfo,
-            onAudioFlush = onAudioFlush
-        )
-    }
-
-    /** The TCP control socket: accept loop, request framing and response serialization. */
     private val server: RtspServer by lazy {
         RtspServer(
             context = context,
-            sessionState = sessionState,
-            router = router,
+            newControl = { socket, state ->
+                val control = Control(state, socket, mirrorFormat(), pinPolicy())
+                RtspServer.Connection(control.router::routeRequest, control::close)
+            },
             senderHls = senderHls,
-            onStreamingStopped = onStreamingStopped,
-            onControlOpened = onControlOpened,
-            onControlClosed = { pairingHandler.endSession() }
+            onStreamingStopped = {
+                onStreamingStopped()
+                onActiveMirrorChanged(null)
+            },
+            onPlaybackReplaced = {
+                onPlaybackReplaced()
+                onActiveMirrorChanged(null)
+            },
+            admitPlayback = admitPlayback,
+            allowHandoff = allowHandoff
         )
     }
 
@@ -261,7 +333,7 @@ open class RtspHandler(
     /** Mirror stream types currently active (96 = audio, 110 = video). Drives TEARDOWN routing.
      *  `protected` so tests can seed it without driving the full FairPlay SETUP handshake. */
     protected val activeStreamTypes: MutableSet<Int>
-        get() = sessionState.activeStreamTypes
+        get() = standalone.sessionState.activeStreamTypes
 
     /** Starts the RTSP server. */
     fun start(scope: CoroutineScope) {
@@ -289,37 +361,37 @@ open class RtspHandler(
 
     /** Handles OPTIONS — macOS asks what RTSP methods are supported. */
     open fun handleOptionsInternal(request: RtspRequest): RtspResponse =
-        verbHandler.handleOptionsInternal(request)
+        standalone.verbHandler.handleOptionsInternal(request)
 
     /** Handles ANNOUNCE — macOS/iOS sends SDP describing codecs, ports, and encryption. */
     open fun handleAnnounceInternal(request: RtspRequest): RtspResponse =
-        verbHandler.handleAnnounceInternal(request)
+        standalone.verbHandler.handleAnnounceInternal(request)
 
     /** Handles SETUP — allocates a media channel. */
     open fun handleSetupInternal(request: RtspRequest): RtspResponse =
-        verbHandler.handleSetupInternal(request)
+        standalone.verbHandler.handleSetupInternal(request)
 
     /** Handles RECORD — macOS/iOS says start sending media now. */
     open fun handleRecordInternal(request: RtspRequest): RtspResponse =
-        verbHandler.handleRecordInternal(request)
+        standalone.verbHandler.handleRecordInternal(request)
 
     /** Handles TEARDOWN — stops one or all streams of the session. */
     open fun handleTeardownInternal(request: RtspRequest): RtspResponse =
-        verbHandler.handleTeardownInternal(request)
+        standalone.verbHandler.handleTeardownInternal(request)
 
     /** Handles any unrecognized RTSP method. */
     open fun handleUnknownInternal(request: RtspRequest): RtspResponse =
-        verbHandler.handleUnknownInternal(request)
+        standalone.verbHandler.handleUnknownInternal(request)
 
     /** Handles PAUSE — suspends media delivery. Responds 200 OK; resume arrives as RECORD. */
     open fun handlePauseInternal(request: RtspRequest): RtspResponse =
-        verbHandler.handlePauseInternal(request)
+        standalone.verbHandler.handlePauseInternal(request)
 
     /** Handles AirPlay photo sharing: HTTP `PUT /photo` with a JPEG/PNG body. */
     open fun handlePhotoPutInternal(request: RtspRequest): RtspResponse =
-        verbHandler.handlePhotoPutInternal(request)
+        standalone.verbHandler.handlePhotoPutInternal(request)
 
     /** Handles AirPlay photo clearing: HTTP `DELETE /photo`. */
     open fun handlePhotoDeleteInternal(request: RtspRequest): RtspResponse =
-        verbHandler.handlePhotoDeleteInternal(request)
+        standalone.verbHandler.handlePhotoDeleteInternal(request)
 }

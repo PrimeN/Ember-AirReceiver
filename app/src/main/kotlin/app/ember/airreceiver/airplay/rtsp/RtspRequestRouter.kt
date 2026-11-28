@@ -21,7 +21,7 @@ import app.ember.airreceiver.util.Logger
  */
 internal class RtspRequestRouter(
     private val audioOnlyMode: Boolean = false,
-    private val verbs: RtspHandler,
+    private val verbs: RtspVerbHandler,
     private val mirrorHandler: RtspMirrorHandler,
     private val pairingHandler: RtspPairingHandler,
     private val parameterHandler: RtspParameterHandler,

@@ -59,6 +59,7 @@ internal class AirPlayMirrorSession(
     private val onVideoFailure: (String) -> Unit = {},
     private val hevcEnabled: Boolean = false,
     private val advertisedFps: Int = 60,
+    private val onStreamSetup: (Int) -> Unit = {},
     private val mirrorFormat: () -> app.ember.airreceiver.settings.MirrorFormat = {
         app.ember.airreceiver.settings.MirrorFormat(mirrorWidth, mirrorHeight, advertisedFps, hevcEnabled)
     }
@@ -90,6 +91,7 @@ internal class AirPlayMirrorSession(
         remoteAddress: java.net.InetAddress,
         senderTimingPort: Int,
     ): Pair<Int, Int> {
+        releaseSession()
         mirrorPeer = remoteAddress
         mirrorAesKey = aesKey
         mirrorEcdhSecret = ecdhSecret
@@ -116,7 +118,6 @@ internal class AirPlayMirrorSession(
         }
         // AirPlay 2 NTP is receiver-initiated: poll the sender's timing port so macOS proceeds.
         val ntp = AirPlayNtpClient(remoteAddress, senderTimingPort).also { ntpClient = it; it.start(scope) }
-        onSenderNameChanged("AirPlay")
         Logger.i("Mirror keys set; eventPort=${event.localPort} timingPort=${ntp.localPort}")
         return event.localPort to ntp.localPort
     }
@@ -129,6 +130,7 @@ internal class AirPlayMirrorSession(
     internal fun startMirrorStream(streamConnectionId: Long): Int {
         val aesKey = mirrorAesKey ?: return 0
         val ecdhSecret = mirrorEcdhSecret ?: return 0
+        onSenderNameChanged("AirPlay")
         mirrorServer?.stop()
         firstFrameTimeout?.cancel()
         val generation = ++videoGeneration
@@ -138,6 +140,7 @@ internal class AirPlayMirrorSession(
             hevcEnabled = format.hevc, onFrameRendered = { reportFirstFrame(generation) }, timingClient = ntpClient
         )
         mirrorServer = server
+        onStreamSetup(110)
         nowPlaying.videoPlaying = true
         nowPlaying.emitNowPlaying()
         onVideoSessionChanged(true)
@@ -183,6 +186,8 @@ internal class AirPlayMirrorSession(
 
     /** Mirror SETUP audio stream (type 96): start the AAC-ELD / AAC-LC / ALAC audio server. @return (dataPort, controlPort). */
     internal fun startMirrorAudio(sampleRate: Int, channels: Int, codecType: Int, framesPerPacket: Int): Pair<Int, Int> {
+        onSenderNameChanged("AirPlay")
+        onStreamSetup(96)
         val aesKey = mirrorAesKey ?: run { Logger.e("audio start before keys set"); return 0 to 0 }
         val ecdhSecret = mirrorEcdhSecret ?: return 0 to 0
         val aesIv = mirrorAesIv ?: return 0 to 0
@@ -222,6 +227,8 @@ internal class AirPlayMirrorSession(
 
     /** Starts the AirPlay 2 buffered audio-only stream (type 103, audio-only senders → TV); returns its TCP port. */
     internal fun startBufferedAudio(): Int {
+        onSenderNameChanged("AirPlay")
+        onStreamSetup(103)
         bufferedAudioServer?.stop()
         val server = BufferedAudioServer().also { bufferedAudioServer = it; it.start(scope) }
         nowPlaying.audioPlaying = true   // buffered audio (type 103) is always audio-only

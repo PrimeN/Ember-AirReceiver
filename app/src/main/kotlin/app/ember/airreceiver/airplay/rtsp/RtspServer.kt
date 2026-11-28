@@ -35,91 +35,62 @@ import kotlinx.coroutines.isActive
  */
 internal class RtspServer(
     private val context: android.content.Context,
-    private val sessionState: RtspSessionState,
-    private val router: RtspRequestRouter,
+    private val newControl: (Socket, RtspSessionState) -> Connection,
     private val senderHls: SenderHlsTransport,
     private val onStreamingStopped: () -> Unit,
-    private val onControlOpened: () -> Unit = {},
-    private val onControlClosed: () -> Unit = {}
+    private val onPlaybackReplaced: () -> Unit,
+    private val admitPlayback: () -> Boolean,
+    private val allowHandoff: () -> Boolean
 ) {
+    internal class Connection(val route: (RtspRequest) -> RtspResponse, private val onClose: () -> Unit) {
+        fun close() = onClose()
+    }
 
     internal var serverSocket: ServerSocket? = null
+    @Volatile internal var activeClient: Socket? = null
+    @Volatile private var playbackClient: Socket? = null
+    @Volatile internal var running = false
+    @Volatile var onVideoNalUnit: ((nalUnit: ByteArray, ptsUs: Long) -> Unit)? = null
 
-    @Volatile
-    internal var activeClient: Socket? = null
-
-    @Volatile
-    internal var running = false
-
-    private var currentCSeq: Int = 0
+    private val controlLock = Any()
     private val accepted = ConcurrentHashMap.newKeySet<Socket>()
-    // One media control connection, one event channel and a bounded number of short requests.
     private val connectionSlots = Semaphore(5)
 
     internal fun closeAcceptedSockets() {
         accepted.forEach { runCatching { it.close() } }
     }
 
-    @Synchronized
-    private fun claimControl(socket: Socket): Boolean {
-        if (!running || activeClient != null) return false
-        activeClient = socket
-        return true
+    internal fun ownsPlayback(socket: Socket) = playbackClient === socket && !socket.isClosed
+
+    internal fun finishPlayback(socket: Socket) = synchronized(controlLock) {
+        if (playbackClient === socket) {
+            playbackClient = null
+            onStreamingStopped()
+        }
     }
 
-    @Synchronized
-    private fun releaseControl(socket: Socket) {
-        if (activeClient === socket) activeClient = null
+    internal fun claimPlayback(socket: Socket): Boolean = synchronized(controlLock) {
+        if (!running || socket.isClosed) return@synchronized false
+        if (playbackClient === socket) return@synchronized true
+        val previous = activeClient
+        if (previous != null && previous !== socket && !allowHandoff()) return@synchronized false
+        if (!admitPlayback()) return@synchronized false
+        if (previous != null && previous !== socket) {
+            runCatching { previous.close() }
+            if (playbackClient === previous) {
+                playbackClient = null
+                onPlaybackReplaced()
+            }
+        }
+        activeClient = socket
+        playbackClient = socket
+        true
     }
 
     private val requestReader = RtspRequestReader(
         maxMessageBytes = MAX_MESSAGE_BYTES,
         maxPhotoBytes = PhotoHandler.MAX_PHOTO_BYTES
     )
-
-    // ─── Shared session state (see [RtspSessionState]) ──────────────────────
-
-    /** The session negotiated by ANNOUNCE/SDP. */
-    private var currentSession: SessionDescription?
-        get() = sessionState.currentSession
-        set(value) { sessionState.currentSession = value }
-
-    /** How many SETUP requests arrived on this connection. */
-    private var setupCount: Int
-        get() = sessionState.setupCount
-        set(value) { sessionState.setupCount = value }
-
-    /** True while the connection carries an AirPlay 2 mirror session instead of an SDP session. */
-    private var isMirrorSession: Boolean
-        get() = sessionState.isMirrorSession
-        set(value) { sessionState.isMirrorSession = value }
-
-    /** The FairPlay context of this connection (fp-setup + key decrypt). */
-    private var fairPlay: FairPlay?
-        get() = sessionState.fairPlay
-        set(value) { sessionState.fairPlay = value }
-
-    /** The pairing context of this connection (pair-setup / pair-verify). */
-    private var pairingSession: PairingSession?
-        get() = sessionState.pairingSession
-        set(value) { sessionState.pairingSession = value }
-
-    /** The sender's address — needed for AirPlay 2 NTP. */
-    private var currentRemoteAddress: java.net.InetAddress?
-        get() = sessionState.currentRemoteAddress
-        set(value) { sessionState.currentRemoteAddress = value }
-
-    /** The mirror streams that are currently running (96 = audio, 110 = video). */
-    private val activeStreamTypes: MutableSet<Int>
-        get() = sessionState.activeStreamTypes
-
-    /**
-     * Callback for decoded H.264 NAL units from the RTP stream.
-     * Set by [app.ember.airreceiver.airplay.AirPlayReceiver] after RECORD — wires to [app.ember.airreceiver.airplay.mirror.VideoDecoder.decodeNalUnit].
-     * Null for audio-only streams.
-     */
-    @Volatile
-    var onVideoNalUnit: ((nalUnit: ByteArray, ptsUs: Long) -> Unit)? = null
 
     /**
      * Binds the RTSP port with SO_REUSEADDR, retrying briefly if a just-stopped instance hasn't
@@ -205,7 +176,7 @@ internal class RtspServer(
                 }
             } finally {
                 claimTimeout.cancel()
-                senderHls.disconnected(socket)
+                synchronized(controlLock) { senderHls.disconnected(socket) }
             }
             return
         }
@@ -217,84 +188,71 @@ internal class RtspServer(
             sendServiceUnavailable(socket)
             return
         }
-        if (!claimControl(socket)) {
+        val permitted = synchronized(controlLock) {
+            if (!running) false
+            else if (activeClient == null) {
+                activeClient = socket
+                if (senderHls.ownsPlayback(socket.inetAddress)) playbackClient = socket
+                true
+            } else allowHandoff()
+        }
+        if (!permitted) {
             sendServiceUnavailable(socket)
             return
         }
-        socket.soTimeout = 0
         handleClient(socket, first)
     }
 
     private fun handleClient(socket: Socket, first: RtspRequest) {
         val inputStream = socket.getInputStream()
         val outputStream = socket.getOutputStream()
-
-        // Fresh pairing + FairPlay state for each control connection.
-        pairingSession = PairingSession(PairingKeys.get(context))
-        fairPlay = FairPlay()
-        currentRemoteAddress = socket.inetAddress
-
+        val state = RtspSessionState().apply {
+            pairingSession = PairingSession(PairingKeys.get(context))
+            fairPlay = FairPlay()
+            currentRemoteAddress = socket.inetAddress
+        }
+        var connection: Connection? = null
         try {
-            onControlOpened()
+            val control = newControl(socket, state)
+            connection = control
             var next: RtspRequest? = first
             while (running && !socket.isClosed && next != null) {
                 val request = next
-                next = null
-                currentCSeq = request.headers["CSeq"]?.toIntOrNull() ?: 0
-                val response = if (request.method == "POST" && request.uri == "/action") {
-                    senderHls.handleAction(request, socket.inetAddress)
-                } else router.routeRequest(request)
-                sendResponse(outputStream, response)
-
-                // After RECORD on a legacy SDP session: a session WITH video switches to interleaved
-                // RTP (video arrives $-framed over this TCP socket). An audio-only session (e.g. Apple
-                // Music) keeps the RTSP control loop — audio arrives on the UDP port, and macOS sends
-                // now-playing metadata / volume / FLUSH / TEARDOWN as RTSP requests here that we must
-                // keep handling (switching to interleaved mode would skip them → no metadata).
-                if (request.method == "RECORD" && response.statusCode == 200 && !isMirrorSession &&
-                    currentSession?.hasVideo == true) {
-                    Logger.d("RTSP handshake complete — switching to interleaved RTP (video)")
+                val response = synchronized(controlLock) {
+                    if (socket.isClosed) return
+                    control.route(request)
+                }
+                sendResponse(outputStream, response, request.headers["CSeq"]?.toIntOrNull() ?: 0)
+                if (request.method == "RECORD" && response.statusCode == 200 && !state.isMirrorSession &&
+                    state.currentSession?.hasVideo == true && ownsPlayback(socket)) {
+                    socket.soTimeout = 0
+                    RtpInterleaved.readLoop(
+                        inputStream = inputStream,
+                        onVideoNalUnit = { unit, pts -> if (ownsPlayback(socket)) onVideoNalUnit?.invoke(unit, pts) },
+                        onStreamEnded = { Logger.i("RTP stream ended") }
+                    )
                     break
                 }
+                // A waiting connection cannot occupy a negotiation slot indefinitely.
+                socket.soTimeout = if (activeClient === socket) 0 else CANDIDATE_TIMEOUT_MS
                 next = requestReader.read(inputStream)
             }
-
-            val session = currentSession
-            if (session != null && session.hasVideo && running) {
-                RtpInterleaved.readLoop(
-                    inputStream = inputStream,
-                    onVideoNalUnit = { nalUnit, ptsUs ->
-                        onVideoNalUnit?.invoke(nalUnit, ptsUs)
-                    },
-                    onStreamEnded = {
-                        Logger.i("RTP stream ended")
-                    }
-                )
-            }
         } catch (e: Exception) {
-            if (running) Logger.e("Error handling RTSP client", e)
+            if (running && !socket.isClosed) Logger.e("Error handling RTSP client", e)
         } finally {
-            Logger.i("Client disconnected")
-            socket.close()
-            currentSession = null
-            pairingSession = null
-            fairPlay = null
-            isMirrorSession = false
-            currentRemoteAddress = null
-            activeStreamTypes.clear()
-            sessionState.mirrorKeysReady = false
-            sessionState.audioModeApproved = false
-            setupCount = 0
-            try {
-                onControlClosed()
-                if (!senderHls.ownsPlayback(socket.inetAddress)) onStreamingStopped()
-            } finally {
-                releaseControl(socket)
+            runCatching { socket.close() }
+            synchronized(controlLock) {
+                connection?.close()
+                if (activeClient === socket) {
+                    if (!senderHls.ownsPlayback(socket.inetAddress)) finishPlayback(socket)
+                    else if (playbackClient === socket) playbackClient = null
+                    activeClient = null
+                }
             }
         }
     }
 
-    private fun sendResponse(outputStream: OutputStream, response: RtspResponse) {
+    private fun sendResponse(outputStream: OutputStream, response: RtspResponse, currentCSeq: Int = 0) {
         // Binary-safe: build the header block as ASCII, then write the raw body bytes.
         // Content-Length must be the BYTE length (not String.length) so binary plists,
         // FairPlay payloads, and encrypted bodies are framed correctly.
@@ -331,6 +289,7 @@ internal class RtspServer(
     }
 
     companion object {
+        private const val CANDIDATE_TIMEOUT_MS = 30_000
         private const val RTSP_PORT = 7000
 
         private const val BIND_MAX_ATTEMPTS = 12      // ~3s total — covers a quick stop→start restart

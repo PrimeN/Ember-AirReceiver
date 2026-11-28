@@ -143,6 +143,7 @@ internal class ReceiverSupervisor(
             context = context,
             admitPlayback = { admit(Protocol.AIRPLAY, owner) { airPlayReceiver?.disconnectSender() } },
             releasePlayback = { ownership.release(owner) },
+            allowHandoff = { preferences.replaceCurrentSender },
             approveAudioOnly = { sender -> preferences.autoAudioMode || audioApproval.ask(sender) },
             displayName = settings.effectiveDisplayName,
             mirrorWidth = settings.mirrorWidth,

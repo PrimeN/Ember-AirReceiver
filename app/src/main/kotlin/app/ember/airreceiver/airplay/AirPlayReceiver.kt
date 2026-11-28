@@ -74,6 +74,7 @@ class AirPlayReceiver(
     private val audioOnlyMode: Boolean = false,
     private val admitPlayback: () -> Boolean = { true },
     private val releasePlayback: () -> Unit = {},
+    private val allowHandoff: () -> Boolean = { false },
     private val audioEnabled: Boolean = false,
     /** Require HomeKit-style SRP PIN pairing before streaming (AppSettings.airPlayPinAuthEnabled). */
     private val pinAuthEnabled: Boolean = false,
@@ -163,30 +164,48 @@ class AirPlayReceiver(
         !audioOnlyMode && app.ember.airreceiver.airplay.mirror.MirrorCapabilities.supportsHevc(mirrorWidth, mirrorHeight, advertisedFps)
     }
 
-    @Volatile private var sessionFormat: MirrorFormat? = null
-    private var sessionPinPolicy = preferredPinPolicy()
+    private fun currentMirrorFormat(): MirrorFormat {
+        val format = preferredMirrorFormat?.invoke()
+            ?: MirrorFormat(mirrorWidth, mirrorHeight, advertisedFps, hevcEnabled)
+        return if (audioOnlyMode) format.copy(hevc = false) else format
+    }
 
-    private fun currentMirrorFormat(): MirrorFormat =
-        sessionFormat ?: MirrorFormat(mirrorWidth, mirrorHeight, advertisedFps, hevcEnabled)
+    private val mediaLock = Any()
+    @Volatile private var mediaGeneration = 0L
+    @Volatile private var mirrorSession: AirPlayMirrorSession? = null
 
-    // AirPlay 2 mirroring: keys, event channel, NTP, mirror data/audio servers.
-    private val mirrorSession = AirPlayMirrorSession(
-        scope = scope,
-        videoSurfaceProvider = videoSurfaceProvider,
-        mirrorWidth = mirrorWidth,
-        mirrorHeight = mirrorHeight,
-        nowPlaying = nowPlaying,
-        onSenderNameChanged = { name -> onSenderNameChanged(name) },
-        onVideoSessionChanged = { hasVideo -> onVideoSessionChanged(hasVideo) },
-        hevcEnabled = hevcEnabled,
-        advertisedFps = advertisedFps,
-        mirrorFormat = ::currentMirrorFormat,
-        onStateChanged = ::emitState,
-        onVideoFailure = { reason ->
-            sessionProgress.fail(reason)
-            onSessionSummary(sessionProgress.summary())
-        }
-    )
+    private fun newMirrorSession(format: MirrorFormat): AirPlayMirrorSession {
+        lateinit var session: AirPlayMirrorSession
+        session = AirPlayMirrorSession(
+            scope = scope,
+            videoSurfaceProvider = videoSurfaceProvider,
+            mirrorWidth = format.width,
+            mirrorHeight = format.height,
+            nowPlaying = nowPlaying,
+            onSenderNameChanged = onSenderNameChanged,
+            onVideoSessionChanged = onVideoSessionChanged,
+            hevcEnabled = format.hevc,
+            advertisedFps = format.fps,
+            onStateChanged = { state -> emitCurrentState(state) { mirrorSession === session } },
+            onVideoFailure = { reason ->
+                if (mirrorSession === session) {
+                    sessionProgress.fail(reason)
+                    onSessionSummary(sessionProgress.summary())
+                }
+            },
+            onStreamSetup = { type ->
+                sessionProgress.mark(SessionProgress.Milestone.SENDER_CONNECTED)
+                sessionProgress.mark(SessionProgress.Milestone.PAIR_VERIFIED)
+                sessionProgress.mark(SessionProgress.Milestone.FAIRPLAY_KEY_READY)
+                sessionProgress.mark(when (type) {
+                    110 -> SessionProgress.Milestone.VIDEO_STREAM_SETUP
+                    103 -> SessionProgress.Milestone.BUFFERED_STREAM_SETUP
+                    else -> SessionProgress.Milestone.AUDIO_STREAM_SETUP
+                })
+            }
+        )
+        return session
+    }
 
     // AirPlay video URL mode (non-mirroring).
     private val urlSession = AirPlayUrlSession(
@@ -335,31 +354,7 @@ class AirPlayReceiver(
             onStreamingStopped = { onStreamingStopped() },
             onPhotoReceived = { bytes, imageType -> onPhotoReceived(bytes, imageType) },
             onPhotoCleared = { onPhotoCleared() },
-            onMirrorSetupKeys = { aesKey, ecdhSecret, aesIv, remoteAddr, senderTimingPort ->
-                // Transport milestones only — a non-empty ECDH secret means pair-verify succeeded
-                // and a 16-byte key means the FairPlay key exchange returned one; neither says
-                // protected content can play (see SessionProgress).
-                sessionProgress.mark(SessionProgress.Milestone.SENDER_CONNECTED)
-                if (ecdhSecret.isNotEmpty()) sessionProgress.mark(SessionProgress.Milestone.PAIR_VERIFIED)
-                if (aesKey.size == 16) sessionProgress.mark(SessionProgress.Milestone.FAIRPLAY_KEY_READY)
-                mirrorSession.startMirrorKeys(aesKey, ecdhSecret, aesIv, remoteAddr, senderTimingPort)
-            },
-            onMirrorStreamStart = { id ->
-                sessionProgress.mark(SessionProgress.Milestone.VIDEO_STREAM_SETUP); mirrorSession.startMirrorStream(id)
-            },
-            onMirrorAudioStart = { sr, ch, ct, spf ->
-                sessionProgress.mark(SessionProgress.Milestone.AUDIO_STREAM_SETUP); mirrorSession.startMirrorAudio(sr, ch, ct, spf)
-            },
-            onAudioFlush = { firstSequence ->
-                mirrorSession.flushAudio(firstSequence)
-                mediaPipeline.flushAudio(firstSequence)
-            },
-            onMirrorAudioStop = { mirrorSession.stopMirrorAudio() },
-            onMirrorVideoStop = { mirrorSession.stopMirrorVideo() },
-            onBufferedAudioStart = {
-                sessionProgress.mark(SessionProgress.Milestone.BUFFERED_STREAM_SETUP); mirrorSession.startBufferedAudio()
-            },
-            onBufferedAudioStop = { mirrorSession.stopBufferedAudio() },
+            onAudioFlush = mediaPipeline::flushAudio,
             onVolume = ::setSessionVolume,
             onNowPlayingMetadata = { title, artist, album ->
                 nowPlaying.npTitle = title; nowPlaying.npArtist = artist; nowPlaying.npAlbum = album
@@ -378,12 +373,12 @@ class AirPlayReceiver(
             pinAuthEnabled = pinAuthEnabled,
             pairingStore = pairingStore,
             onShowPin = { pin -> onPinChanged(pin) },
-            pinPolicy = { sessionPinPolicy },
+            pinPolicy = preferredPinPolicy,
             mirrorFormat = ::currentMirrorFormat,
-            onControlOpened = {
-                sessionPinPolicy = preferredPinPolicy()
-                sessionFormat = preferredMirrorFormat?.invoke()?.let { if (audioOnlyMode) it.copy(hevc = false) else it }
-            }
+            allowHandoff = allowHandoff,
+            createMirrorSession = ::newMirrorSession,
+            onActiveMirrorChanged = { mirrorSession = it },
+            onPlaybackReplaced = { releaseMediaComponents(keepOwnership = true) }
         ).also {
             it.start(scope)
             mediaPipeline.rtspHandler = it
@@ -408,31 +403,35 @@ class AirPlayReceiver(
         // the timeline has at least begun before the media stage is recorded.
         sessionProgress.mark(SessionProgress.Milestone.SENDER_CONNECTED)
 
+        val generation = synchronized(mediaLock) { mediaGeneration }
         scope.launch {
-            try {
-                if (session.hasVideo) mediaPipeline.startVideoDecoder(session)
-                if (session.hasAudio) mediaPipeline.startAudioPlayer(session)
-                // Legacy (SDP) session: reflect its stream kinds into now-playing state so an
-                // audio-only RAOP session shows the now-playing card.
-                nowPlaying.npSenderName = session.senderName.ifBlank { nowPlaying.npSenderName }
-                nowPlaying.videoPlaying = session.hasVideo
-                nowPlaying.audioPlaying = session.hasAudio
-                nowPlaying.emitNowPlaying()
-                // Notify AirReceiverService of the sender name BEFORE emitting CONNECTED,
-                // so the name is ready when the ActiveConnection is created.
-                onSenderNameChanged(session.senderName)
-                // Same for the stream kind: an audio-only session must not pull the
-                // streaming screen to the front.
-                onVideoSessionChanged(session.hasVideo)
-                sessionProgress.mark(SessionProgress.Milestone.MEDIA_STARTED)
-                emitState(ProtocolState.CONNECTED)
-            } catch (e: Exception) {
-                e.rethrowIfCancellation()
-                sessionProgress.fail("media pipeline: ${e.javaClass.simpleName}")
-                val summary = sessionProgress.summary()
-                Logger.e("Failed to start media pipeline — $summary", e)
-                onSessionSummary(summary)
-                emitState(ProtocolState.ERROR)
+            synchronized(mediaLock) {
+                if (generation != mediaGeneration) return@launch
+                try {
+                    if (session.hasVideo) mediaPipeline.startVideoDecoder(session)
+                    if (session.hasAudio) mediaPipeline.startAudioPlayer(session)
+                    // Legacy (SDP) session: reflect its stream kinds into now-playing state so an
+                    // audio-only RAOP session shows the now-playing card.
+                    nowPlaying.npSenderName = session.senderName.ifBlank { nowPlaying.npSenderName }
+                    nowPlaying.videoPlaying = session.hasVideo
+                    nowPlaying.audioPlaying = session.hasAudio
+                    nowPlaying.emitNowPlaying()
+                    // Notify AirReceiverService of the sender name BEFORE emitting CONNECTED,
+                    // so the name is ready when the ActiveConnection is created.
+                    onSenderNameChanged(session.senderName)
+                    // Same for the stream kind: an audio-only session must not pull the
+                    // streaming screen to the front.
+                    onVideoSessionChanged(session.hasVideo)
+                    sessionProgress.mark(SessionProgress.Milestone.MEDIA_STARTED)
+                    emitCurrentState(ProtocolState.CONNECTED) { mediaGeneration == generation }
+                } catch (e: Exception) {
+                    e.rethrowIfCancellation()
+                    sessionProgress.fail("media pipeline: ${e.javaClass.simpleName}")
+                    val summary = sessionProgress.summary()
+                    Logger.e("Failed to start media pipeline — $summary", e)
+                    onSessionSummary(summary)
+                    emitCurrentState(ProtocolState.ERROR) { mediaGeneration == generation }
+                }
             }
         }
     }
@@ -474,24 +473,32 @@ class AirPlayReceiver(
      * decoders are released — a decoder must not be freed while a player may still render.
      */
     private fun setSessionVolume(volume: Float) {
-        mirrorSession.setVolume(volume)
+        mirrorSession?.setVolume(volume)
         mediaPipeline.setVolume(volume)
         urlSession.setVolume(volume)
     }
 
-    private fun releaseMediaComponents() {
+    private fun releaseMediaComponents(keepOwnership: Boolean = false) = synchronized(mediaLock) {
+        mediaGeneration++
         mediaPipeline.stopVideoFeed()
         mediaPipeline.closeAudioSocket()
-        mirrorSession.releaseStreams()
+        mirrorSession?.releaseStreams()
         urlSession.release()
-        mirrorSession.releaseSession()
+        mirrorSession?.releaseSession()
+        mirrorSession = null
         mediaPipeline.releaseDecoders()
         setSessionVolume(0f)
         nowPlaying.reset()
-        releasePlayback()
+        if (!keepOwnership) releasePlayback()
     }
 
     // ─── Private: state emission ─────────────────────────────────────────────
+
+    private fun emitCurrentState(state: ProtocolState, isCurrent: () -> Boolean) {
+        scope.launch(Dispatchers.Main.immediate) {
+            if (isCurrent()) onStateChanged(state)
+        }
+    }
 
     /** Dispatches [state] on the Main thread (Android UI rule). */
     private fun emitState(state: ProtocolState) {
