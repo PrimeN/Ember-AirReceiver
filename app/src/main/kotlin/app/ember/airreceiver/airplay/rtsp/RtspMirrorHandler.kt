@@ -84,101 +84,103 @@ internal class RtspMirrorHandler(
      *    (with the pairing secret) to the receiver, reply with event/timing ports.
      *  - msg 2 carries `streams`[type 110] → start the mirror data server, reply with its port.
      */
-    internal fun handleMirrorSetup(request: RtspRequest): RtspResponse = try {
-        val req = PlistCodec.decode(request.bodyBytes)
-        Logger.i("mirror SETUP plist: " + req.entries.joinToString { (k, v) ->
-            "$k=" + when (v) {
-                is ByteArray -> "${v.size}B"
-                is List<*> -> "list[${v.size}]"
-                else -> v.toString()
+    internal fun handleMirrorSetup(request: RtspRequest): RtspResponse {
+        return try {
+            val req = PlistCodec.decode(request.bodyBytes)
+            Logger.i("mirror SETUP plist: " + req.entries.joinToString { (k, v) ->
+                "$k=" + when (v) {
+                    is ByteArray -> "${v.size}B"
+                    is List<*> -> "list[${v.size}]"
+                    else -> v.toString()
+                }
+            })
+            val response = mutableMapOf<String, Any?>()
+
+            isMirrorSession = true
+            val ekey = req["ekey"] as? ByteArray
+            if (ekey != null) {
+                val aesKey = fairPlay!!.decrypt(ekey)
+                val ecdhSecret = pairingSession?.sharedSecret ?: error("mirror SETUP before pair-verify")
+                val aesIv = (req["eiv"] as? ByteArray) ?: ByteArray(16)
+                val senderTimingPort = (req["timingPort"] as? Long)?.toInt() ?: 0
+                val remoteAddr = currentRemoteAddress ?: error("mirror SETUP without remote address")
+                val (eventPort, timingPort) = onMirrorSetupKeys(aesKey, ecdhSecret, aesIv, remoteAddr, senderTimingPort)
+                response["eventPort"] = eventPort.toLong()
+                response["timingPort"] = timingPort.toLong()
+                Logger.i("mirror SETUP keys OK — eventPort=$eventPort timingPort=$timingPort (sender timing $senderTimingPort)")
             }
-        })
-        val response = mutableMapOf<String, Any?>()
 
-        isMirrorSession = true
-        val ekey = req["ekey"] as? ByteArray
-        if (ekey != null) {
-            val aesKey = fairPlay!!.decrypt(ekey)
-            val ecdhSecret = pairingSession?.sharedSecret ?: error("mirror SETUP before pair-verify")
-            val aesIv = (req["eiv"] as? ByteArray) ?: ByteArray(16)
-            val senderTimingPort = (req["timingPort"] as? Long)?.toInt() ?: 0
-            val remoteAddr = currentRemoteAddress ?: error("mirror SETUP without remote address")
-            val (eventPort, timingPort) = onMirrorSetupKeys(aesKey, ecdhSecret, aesIv, remoteAddr, senderTimingPort)
-            response["eventPort"] = eventPort.toLong()
-            response["timingPort"] = timingPort.toLong()
-            Logger.i("mirror SETUP keys OK — eventPort=$eventPort timingPort=$timingPort (sender timing $senderTimingPort)")
-        }
-
-        val streams = req["streams"] as? List<*>
-        if (audioOnlyMode && streams?.any { ((it as? Map<*, *>)?.get("type") as? Number)?.toInt() == 110 } == true) {
-            return RtspResponse(461, "Unsupported Transport", protocol = request.responseProtocol())
-        }
-        if (streams != null) {
-            val resStreams = streams.mapNotNull { s ->
-                val stream = s as? Map<*, *> ?: return@mapNotNull null
-                when ((stream["type"] as? Long)?.toInt()) {
-                    110 -> {
-                        val scid = (stream["streamConnectionID"] as? Long) ?: 0L
-                        val dataPort = onMirrorStreamStart(scid)
-                        activeStreamTypes.add(110)
-                        Logger.i("mirror stream type=110 streamConnectionID=$scid dataPort=$dataPort")
-                        mapOf("type" to 110L, "dataPort" to dataPort.toLong())
-                    }
-                    96 -> {
-                        // Realtime-audio stream fields (codec type ct, samples-per-frame spf, latencies, …).
-                        Logger.d("mirror stream type=96 dict: " + stream.entries.joinToString { (k, v) ->
-                            "$k=" + when (v) { is ByteArray -> "${v.size}B"; is List<*> -> "list[${v.size}]"; else -> v.toString() }
-                        })
-                        if (!audioEnabled) {
-                            Logger.i("mirror stream type=96 ignored (audio disabled in settings)")
-                            return@mapNotNull null
+            val streams = req["streams"] as? List<*>
+            if (audioOnlyMode && streams?.any { ((it as? Map<*, *>)?.get("type") as? Number)?.toInt() == 110 } == true) {
+                return RtspResponse(461, "Unsupported Transport", protocol = request.responseProtocol())
+            }
+            if (streams != null) {
+                val resStreams = streams.mapNotNull { s ->
+                    val stream = s as? Map<*, *> ?: return@mapNotNull null
+                    when ((stream["type"] as? Long)?.toInt()) {
+                        110 -> {
+                            val scid = (stream["streamConnectionID"] as? Long) ?: 0L
+                            val dataPort = onMirrorStreamStart(scid)
+                            activeStreamTypes.add(110)
+                            Logger.i("mirror stream type=110 streamConnectionID=$scid dataPort=$dataPort")
+                            mapOf("type" to 110L, "dataPort" to dataPort.toLong())
                         }
-                        val sr = (stream["sr"] as? Long)?.toInt() ?: 44100
-                        val ch = (stream["channels"] as? Long)?.toInt() ?: 2
-                        val ct = (stream["ct"] as? Long)?.toInt() ?: 8   // 8 = AAC-ELD (mirror), 4 = AAC-LC, 2 = ALAC
-                        val spf = (stream["spf"] as? Long)?.toInt() ?: 352   // ALAC frameLength (samples/frame)
-                        val (dataPort, controlPort) = onMirrorAudioStart(sr, ch, ct, spf)
-                        activeStreamTypes.add(96)
-                        Logger.i("audio stream type=96 (ct=$ct ${sr}Hz x$ch spf=$spf) dataPort=$dataPort controlPort=$controlPort")
-                        mapOf("type" to 96L, "dataPort" to dataPort.toLong(), "controlPort" to controlPort.toLong())
-                    }
-                    StreamSupport.TYPE_BUFFERED_AUDIO -> {
-                        // Buffered (audio-only) AirPlay 2 — accepted + instrumented. The playback
-                        // path is not built yet, so the session surfaces a notice (see
-                        // AirPlayMirrorSession.startBufferedAudio / StreamSupport). The stream is
-                        // AirPlay transport-encrypted (session keys), not content DRM. Stream fields
-                        // (codec ct, audioFormat, shk/shiv, latencies) are logged for reference.
-                        Logger.d("buffered audio stream type=103 dict: " + stream.entries.joinToString { (k, v) ->
-                            "$k=" + when (v) { is ByteArray -> "${v.size}B"; is List<*> -> "list[${v.size}]"; else -> v.toString() }
-                        })
-                        if (!audioEnabled) {
-                            Logger.i("buffered audio (type=103) ignored (audio disabled in settings)")
-                            return@mapNotNull null
+                        96 -> {
+                            // Realtime-audio stream fields (codec type ct, samples-per-frame spf, latencies, …).
+                            Logger.d("mirror stream type=96 dict: " + stream.entries.joinToString { (k, v) ->
+                                "$k=" + when (v) { is ByteArray -> "${v.size}B"; is List<*> -> "list[${v.size}]"; else -> v.toString() }
+                            })
+                            if (!audioEnabled) {
+                                Logger.i("mirror stream type=96 ignored (audio disabled in settings)")
+                                return@mapNotNull null
+                            }
+                            val sr = (stream["sr"] as? Long)?.toInt() ?: 44100
+                            val ch = (stream["channels"] as? Long)?.toInt() ?: 2
+                            val ct = (stream["ct"] as? Long)?.toInt() ?: 8   // 8 = AAC-ELD (mirror), 4 = AAC-LC, 2 = ALAC
+                            val spf = (stream["spf"] as? Long)?.toInt() ?: 352   // ALAC frameLength (samples/frame)
+                            val (dataPort, controlPort) = onMirrorAudioStart(sr, ch, ct, spf)
+                            activeStreamTypes.add(96)
+                            Logger.i("audio stream type=96 (ct=$ct ${sr}Hz x$ch spf=$spf) dataPort=$dataPort controlPort=$controlPort")
+                            mapOf("type" to 96L, "dataPort" to dataPort.toLong(), "controlPort" to controlPort.toLong())
                         }
-                        val dataPort = onBufferedAudioStart()
-                        activeStreamTypes.add(103)
-                        Logger.i("buffered audio stream type=103 dataPort=$dataPort")
-                        mapOf("type" to 103L, "dataPort" to dataPort.toLong())
-                    }
-                    else -> {
-                        Logger.i("mirror SETUP stream dict: " + stream.entries.joinToString { (k, v) ->
-                            "$k=" + when (v) { is ByteArray -> "${v.size}B"; else -> v.toString() }
-                        })
-                        null
+                        StreamSupport.TYPE_BUFFERED_AUDIO -> {
+                            // Buffered (audio-only) AirPlay 2 — accepted + instrumented. The playback
+                            // path is not built yet, so the session surfaces a notice (see
+                            // AirPlayMirrorSession.startBufferedAudio / StreamSupport). The stream is
+                            // AirPlay transport-encrypted (session keys), not content DRM. Stream fields
+                            // (codec ct, audioFormat, shk/shiv, latencies) are logged for reference.
+                            Logger.d("buffered audio stream type=103 dict: " + stream.entries.joinToString { (k, v) ->
+                                "$k=" + when (v) { is ByteArray -> "${v.size}B"; is List<*> -> "list[${v.size}]"; else -> v.toString() }
+                            })
+                            if (!audioEnabled) {
+                                Logger.i("buffered audio (type=103) ignored (audio disabled in settings)")
+                                return@mapNotNull null
+                            }
+                            val dataPort = onBufferedAudioStart()
+                            activeStreamTypes.add(103)
+                            Logger.i("buffered audio stream type=103 dataPort=$dataPort")
+                            mapOf("type" to 103L, "dataPort" to dataPort.toLong())
+                        }
+                        else -> {
+                            Logger.i("mirror SETUP stream dict: " + stream.entries.joinToString { (k, v) ->
+                                "$k=" + when (v) { is ByteArray -> "${v.size}B"; else -> v.toString() }
+                            })
+                            null
+                        }
                     }
                 }
+                response["streams"] = resStreams
             }
-            response["streams"] = resStreams
-        }
 
-        RtspResponse(
-            200, "OK",
-            bodyBytes = PlistCodec.encode(response),
-            contentType = "application/x-apple-binary-plist",
-            protocol = request.responseProtocol()
-        )
-    } catch (e: Exception) {
-        Logger.e("mirror SETUP failed", e)
-        RtspResponse(400, "Bad Request", protocol = request.responseProtocol())
+            RtspResponse(
+                200, "OK",
+                bodyBytes = PlistCodec.encode(response),
+                contentType = "application/x-apple-binary-plist",
+                protocol = request.responseProtocol()
+            )
+        } catch (e: Exception) {
+            Logger.e("mirror SETUP failed", e)
+            RtspResponse(400, "Bad Request", protocol = request.responseProtocol())
+        }
     }
 }
